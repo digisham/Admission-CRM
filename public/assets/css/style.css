@@ -1,0 +1,282 @@
+/* GD Goenka Public School, Purnea — Design System */
+:root {
+    --gdg-navy: #123985;
+    --gdg-navy-dark: #0a2355;
+    --gdg-navy-light: #1f4cb0;
+    --gdg-gold: #B59859;
+    --gdg-gold-light: #d8c28c;
+    --gdg-gold-subtle: #f9f5ed;
+    --gdg-bg: #f8fafc;
+    --gdg-card-bg: #ffffff;
+    --gdg-border: #e2e8f0;
+    --gdg-text-main: #1e293b;
+    --gdg-text-muted: #64748b;
+    --sidebar-width: 260px;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--gdg-text-main);
+    background-color: var(--gdg-bg);
+    overflow-x: hidden;
+}
+
+/* Colors & Helpers */
+.text-navy { color: var(--gdg-navy) !important; }
+.text-gold { color: var(--gdg-gold) !important; }
+.bg-navy { background-color: var(--gdg-navy) !important; color: #fff !important; }
+.bg-navy-subtle { background-color: #eaf0fb !important; color: var(--gdg-navy) !important; }
+.bg-gold { background-color: var(--gdg-gold) !important; color: #fff !important; }
+.bg-gold-subtle { background-color: var(--gdg-gold-subtle) !important; color: #7a6125 !important; }
+
+.btn-navy {
+    background-color: var(--gdg-navy);
+    color: #ffffff;
+    border: 1px solid var(--gdg-navy);
+    font-weight: 500;
+}
+.btn-navy:hover, .btn-navy:focus {
+    background-color: var(--gdg-navy-dark);
+    color: #ffffff;
+    border-color: var(--gdg-navy-dark);
+}
+
+.btn-gold {
+    background-color: var(--gdg-gold);
+    color: #ffffff;
+    border: 1px solid var(--gdg-gold);
+    font-weight: 500;
+}
+.btn-gold:hover {
+    background-color: #9f8245;
+    color: #ffffff;
+}
+
+.btn-session-selector {
+    background-color: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    color: var(--gdg-navy);
+    border-radius: 6px;
+    padding: 0.35rem 0.65rem;
+}
+
+.brand-badge {
+    background: linear-gradient(135deg, var(--gdg-navy), var(--gdg-navy-dark));
+    color: var(--gdg-gold);
+    font-weight: 800;
+    font-size: 0.95rem;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--gdg-gold);
+    letter-spacing: 0.5px;
+}
+
+.user-avatar-circle {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: var(--gdg-navy);
+    color: #ffffff;
+    font-weight: 600;
+    font-size: 0.85rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid var(--gdg-gold);
+}
+
+/* Layout Architecture */
+.app-wrapper {
+    display: flex;
+    min-height: 100vh;
+}
+
+.sidebar-wrapper {
+    width: var(--sidebar-width);
+    flex-shrink: 0;
+    height: 100vh;
+    position: sticky;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    z-index: 1040;
+    transition: transform 0.3s ease;
+}
+
+.sidebar-body {
+    flex-grow: 1;
+    overflow-y: auto;
+}
+
+.sidebar-wrapper .nav-link {
+    color: var(--gdg-text-main);
+    padding: 0.55rem 1rem;
+    margin: 0.15rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.88rem;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    transition: all 0.15s ease-in-out;
+}
+
+.sidebar-wrapper .nav-link .nav-icon {
+    width: 18px;
+    height: 18px;
+    margin-right: 0.75rem;
+    color: #94a3b8;
+    transition: color 0.15s ease-in-out;
+}
+
+.sidebar-wrapper .nav-link:hover {
+    background-color: #f1f5f9;
+    color: var(--gdg-navy);
+}
+
+.sidebar-wrapper .nav-link:hover .nav-icon {
+    color: var(--gdg-navy);
+}
+
+.sidebar-wrapper .nav-link.active {
+    background-color: var(--gdg-navy);
+    color: #ffffff;
+}
+
+.sidebar-wrapper .nav-link.active .nav-icon {
+    color: var(--gdg-gold);
+}
+
+.main-wrapper {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+/* Metric Cards */
+.metric-card {
+    background: #ffffff;
+    border: 1px solid var(--gdg-border);
+    border-radius: 10px;
+    padding: 1.25rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.metric-card:hover {
+    box-shadow: 0 4px 12px rgba(18, 57, 133, 0.08);
+}
+
+.metric-card-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.metric-val {
+    font-size: 1.75rem;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--gdg-navy);
+}
+
+/* Tables & Badges */
+.custom-table {
+    font-size: 0.88rem;
+}
+
+.custom-table th {
+    background-color: #f8fafc;
+    color: #475569;
+    font-weight: 600;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-top: none;
+    border-bottom: 2px solid #e2e8f0;
+    padding: 0.75rem 0.75rem;
+}
+
+.custom-table td {
+    padding: 0.75rem 0.75rem;
+    vertical-align: middle;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.badge-lead-status {
+    padding: 0.35em 0.65em;
+    font-weight: 500;
+    font-size: 0.75rem;
+    border-radius: 4px;
+}
+
+.badge-status-New { background-color: #dbeafe; color: #1e40af; }
+.badge-status-Assigned { background-color: #e0e7ff; color: #3730a3; }
+.badge-status-Contact-Attempted { background-color: #fef3c7; color: #92400e; }
+.badge-status-Contacted { background-color: #fef9c3; color: #854d0e; }
+.badge-status-Interested { background-color: #dcfce7; color: #166534; }
+.badge-status-Follow-up-Required { background-color: #fed7aa; color: #9a3412; }
+.badge-status-School-Visit-Scheduled { background-color: #cffafe; color: #155e75; }
+.badge-status-School-Visit-Completed { background-color: #e0f2fe; color: #0369a1; }
+.badge-status-Application-In-Progress { background-color: #f3e8ff; color: #6b21a8; }
+.badge-status-Admission-Confirmed { background-color: #bbf7d0; color: #14532d; font-weight: 600; }
+.badge-status-Not-Interested { background-color: #f1f5f9; color: #475569; }
+.badge-status-Lost---Unreachable { background-color: #fee2e2; color: #991b1b; }
+
+.priority-badge-Low { background-color: #f1f5f9; color: #475569; }
+.priority-badge-Medium { background-color: #e0f2fe; color: #0369a1; }
+.priority-badge-High { background-color: #fed7aa; color: #9a3412; }
+.priority-badge-Urgent { background-color: #fee2e2; color: #991b1b; font-weight: 700; }
+
+/* Timeline Elements */
+.timeline-list {
+    position: relative;
+    padding-left: 2rem;
+}
+
+.timeline-list::before {
+    content: '';
+    position: absolute;
+    left: 14px;
+    top: 5px;
+    bottom: 5px;
+    width: 2px;
+    background-color: #e2e8f0;
+}
+
+.timeline-item {
+    position: relative;
+    margin-bottom: 1.5rem;
+}
+
+.timeline-icon {
+    position: absolute;
+    left: -2rem;
+    top: 0;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #ffffff;
+    border: 2px solid var(--gdg-navy);
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 991.98px) {
+    .sidebar-wrapper {
+        position: fixed;
+        left: 0;
+        top: 0;
+        transform: translateX(-100%);
+    }
+    .sidebar-wrapper.show {
+        transform: translateX(0);
+    }
+}
