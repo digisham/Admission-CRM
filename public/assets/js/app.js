@@ -1,8 +1,16 @@
-/**
- * GD Goenka Public School, Purnea — CRM Frontend Logic
- */
 document.addEventListener('DOMContentLoaded', () => {
-    // 1. Sidebar Toggle on Mobile
+    // 1. Live Clock Ticker
+    function updateClock() {
+        const el = document.getElementById('liveClockDisplay');
+        if (el) {
+            const now = new Date();
+            el.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // 2. Sidebar Toggle on Mobile
     const sidebar = document.getElementById('sidebar');
     const toggleBtn = document.getElementById('sidebarToggleBtn');
     const closeBtn = document.getElementById('sidebarCloseBtn');
