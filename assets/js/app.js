@@ -2117,7 +2117,97 @@ ${EMAIL_SIGN_OFF_PLAIN}`
             textarea.setSelectionRange(newCursorPos, newCursorPos);
             setText('quickWaCharCount', `${textarea.value.length} characters`);
         }
-    });
+    // Helper to sanitize any Indian phone number into exactly 10 digits
+    function extractValidIndianMobile(raw) {
+        if (!raw) return '';
+        let digits = String(raw).replace(/\D/g, '');
+        // Strip leading zeros (e.g. 08287704101 -> 8287704101)
+        digits = digits.replace(/^0+/, '');
+        // Strip leading country code 91 if 12 digits (e.g. 918287704101 -> 8287704101)
+        if (digits.length === 12 && digits.startsWith('91')) {
+            digits = digits.substring(2);
+        }
+        // If longer than 10 digits from imports, pick last 10 if valid mobile starting with 6/7/8/9
+        if (digits.length > 10) {
+            const last10 = digits.slice(-10);
+            if (/^[6-9]\d{9}$/.test(last10)) {
+                digits = last10;
+            }
+        }
+        return digits;
+    }
+
+    // Universal Activity Timeline Logger (Works on both leads/index offcanvas and leads/show page)
+    async function recordQuickCommunication(type, outcome, remarks, details) {
+        const l = window.currentOffcanvasLead;
+        if (!l || !l.id) return;
+        try {
+            const formData = new FormData();
+            formData.append('lead_id', l.id);
+            formData.append('contact_method', type === 'whatsapp' ? 'WhatsApp' : 'Email');
+            formData.append('outcome', outcome);
+            formData.append('remarks', remarks);
+            formData.append('lead_status', l.status || '');
+            formData.append('_csrf_token', window.CSRF_TOKEN || document.querySelector('input[name="_csrf_token"]')?.value || '');
+
+            const res = await fetch(getAppUrl('followups/store'), {
+                method: 'POST',
+                body: formData,
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                const author = data.author || 'Staff';
+                const time = data.formatted_time || 'Today';
+
+                // 1. Offcanvas activity list (leads/index)
+                if (typeof appendActivityToOffcanvas === 'function') {
+                    appendActivityToOffcanvas(l.id, {
+                        type: type,
+                        author: author,
+                        time: time,
+                        remarks: details || remarks
+                    });
+                }
+
+                // 2. Timeline on Lead Details page (leads/show)
+                const timelineContainer = document.querySelector('#timeline .timeline-v2, .timeline-v2');
+                if (timelineContainer) {
+                    const icon = type === 'whatsapp' ? 'message-circle' : 'mail';
+                    const nodeClass = type === 'whatsapp' ? 'timeline-node-lavender' : 'timeline-node-white';
+                    const badgeColor = type === 'whatsapp' ? 'bg-success' : 'bg-primary';
+
+                    const itemHtml = `
+                        <div class="timeline-v2-item" style="animation: fadeIn 0.4s ease;">
+                            <div class="timeline-v2-node ${nodeClass}">
+                                <i data-lucide="${icon}" style="width: 15px; height: 15px;"></i>
+                            </div>
+                            <div class="timeline-v2-content">
+                                <div class="d-flex align-items-center justify-content-between">
+                                    <span class="text-dark small"><strong>${escapeHtml(author)}</strong> logged ${type === 'whatsapp' ? 'WhatsApp' : 'Email'} interaction</span>
+                                    <span class="text-muted" style="font-size: 0.72rem;">${escapeHtml(time)}</span>
+                                </div>
+                                <div class="d-flex align-items-center flex-wrap gap-2 mt-1">
+                                    <span class="badge ${badgeColor} text-white border-0 px-2 py-0.5 fw-semibold" style="font-size: 0.72rem; border-radius: 4px;">
+                                        <i data-lucide="check" style="width: 12px; height: 12px;" class="me-1"></i> ${escapeHtml(outcome)}
+                                    </span>
+                                </div>
+                                <div class="notes-card-box mt-2">
+                                    <div class="notes-card-body" style="font-size: 0.82rem; white-space: pre-wrap;">${escapeHtml(details || remarks)}</div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    timelineContainer.insertAdjacentHTML('afterbegin', itemHtml);
+                    if (typeof lucide !== 'undefined') lucide.createIcons();
+                }
+
+                crmToast(`${type === 'whatsapp' ? 'WhatsApp' : 'Email'} activity recorded on timeline.`, 'success');
+            }
+        } catch (err) {
+            console.error('Followup log error:', err);
+        }
+    }
 
     // Open WhatsApp Modal (supports offcanvas button and lead details page buttons)
     document.addEventListener('click', (e) => {
@@ -2130,9 +2220,12 @@ ${EMAIL_SIGN_OFF_PLAIN}`
                 return;
             }
 
+            const rawMobile = l.clean_mobile || l.mobile || '';
+            const valid10Digits = extractValidIndianMobile(rawMobile);
+
             setText('quickWaStudentName', l.student_name || 'Student');
             setText('quickWaClassBadge', l.class_applied || 'General');
-            setText('quickWaMobileBadge', '+91 ' + (l.mobile || l.clean_mobile || '—'));
+            setText('quickWaMobileBadge', valid10Digits ? `+91 ${valid10Digits}` : (rawMobile || '—'));
             setText('quickWaStatusText', l.status || 'New');
 
             const badgeEl = document.getElementById('quickWaStatusBadge');
@@ -2185,12 +2278,15 @@ ${EMAIL_SIGN_OFF_PLAIN}`
                 const bsModal = bootstrap.Modal.getOrCreateInstance(modalEl);
                 bsModal.show();
 
-                // Initialize Summernote upon modal opening
+                // Initialize Summernote and set template content cleanly
+                initSummernoteForEmail();
+                setSummernoteContent(tpl.bodyHtml, tpl.bodyPlain);
+
                 setTimeout(() => {
                     initSummernoteForEmail();
                     setSummernoteContent(tpl.bodyHtml, tpl.bodyPlain);
                     if (typeof lucide !== 'undefined') lucide.createIcons();
-                }, 100);
+                }, 150);
             }
             return;
         }
@@ -2218,60 +2314,52 @@ ${EMAIL_SIGN_OFF_PLAIN}`
         const msg = document.getElementById('quickWaMessage')?.value || '';
         if (!msg) return;
         navigator.clipboard.writeText(msg).then(() => {
-            crmToast('WhatsApp message copied to clipboard!', 'success');
+            crmToast('Formatted WhatsApp message copied to clipboard!', 'success');
         }).catch(() => {
             crmToast('Failed to copy text', 'error');
         });
     });
 
-    document.getElementById('btnConfirmSendWhatsApp')?.addEventListener('click', async function() {
+    // Send WhatsApp (Auto / App)
+    async function executeSendWhatsApp(useWebOnly = false) {
         const l = window.currentOffcanvasLead;
         if (!l) return;
-        const cleanMobile = l.clean_mobile || (l.mobile ? l.mobile.replace(/\D/g, '') : '');
-        if (!cleanMobile) {
-            alert('This candidate does not have a valid mobile number recorded.');
+        const raw = l.clean_mobile || l.mobile || '';
+        const validDigits = extractValidIndianMobile(raw);
+        if (!validDigits || validDigits.length < 10) {
+            alert(`This candidate does not have a valid 10-digit mobile number recorded (Found: "${raw}"). Please update the candidate mobile number first.`);
             return;
         }
+        const fullWaPhone = '91' + validDigits;
         const msg = document.getElementById('quickWaMessage')?.value?.trim() || '';
         if (!msg) {
             alert('Please enter a WhatsApp message to send.');
             return;
         }
 
-        // Open WhatsApp Web/App
-        const waUrl = `https://wa.me/91${cleanMobile}?text=${encodeURIComponent(msg)}`;
-        window.open(waUrl, '_blank');
+        // Clean newlines: normalize \r\n to \n for WhatsApp formatting
+        const cleanMsg = msg.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const encodedText = encodeURIComponent(cleanMsg);
 
-        // Optionally record in activity timeline
+        const waUrl = useWebOnly
+            ? `https://web.whatsapp.com/send?phone=${fullWaPhone}&text=${encodedText}`
+            : `https://api.whatsapp.com/send?phone=${fullWaPhone}&text=${encodedText}`;
+
+        const openedWin = window.open(waUrl, '_blank');
+        if (!openedWin) {
+            // Popup blocked fallback
+            window.location.href = waUrl;
+        }
+
+        // Record interaction in timeline
         const logActivity = document.getElementById('quickWaLogActivity')?.checked;
         if (logActivity) {
-            try {
-                const formData = new FormData();
-                formData.append('lead_id', l.id);
-                formData.append('contact_method', 'WhatsApp');
-                formData.append('outcome', 'WhatsApp Message Sent');
-                formData.append('remarks', msg.length > 250 ? (msg.substring(0, 250) + '...') : msg);
-                formData.append('lead_status', l.status);
-                formData.append('_csrf_token', window.CSRF_TOKEN || document.querySelector('input[name="_csrf_token"]')?.value || '');
-
-                const res = await fetch(getAppUrl('followups/store'), {
-                    method: 'POST',
-                    body: formData,
-                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
-                });
-                const data = await res.json();
-                if (data.status === 'success') {
-                    appendActivityToOffcanvas(l.id, {
-                        type: 'whatsapp',
-                        author: data.author || 'Staff',
-                        time: data.formatted_time || 'Today',
-                        remarks: `Sent WhatsApp message: "${msg.length > 100 ? msg.substring(0, 100) + '...' : msg}"`
-                    });
-                    crmToast('WhatsApp activity logged in timeline.', 'success');
-                }
-            } catch (err) {
-                console.error('Followup log error:', err);
-            }
+            await recordQuickCommunication(
+                'whatsapp',
+                'WhatsApp Message Sent',
+                cleanMsg.length > 250 ? (cleanMsg.substring(0, 250) + '...') : cleanMsg,
+                `Sent WhatsApp to +${fullWaPhone}:\n\n${cleanMsg.length > 150 ? cleanMsg.substring(0, 150) + '...' : cleanMsg}`
+            );
         }
 
         const modalEl = document.getElementById('leadQuickWhatsAppModal');
@@ -2279,6 +2367,14 @@ ${EMAIL_SIGN_OFF_PLAIN}`
             const inst = bootstrap.Modal.getInstance(modalEl);
             if (inst) inst.hide();
         }
+    }
+
+    document.getElementById('btnConfirmSendWhatsApp')?.addEventListener('click', function() {
+        executeSendWhatsApp(false);
+    });
+
+    document.getElementById('btnSendWhatsAppWeb')?.addEventListener('click', function() {
+        executeSendWhatsApp(true);
     });
 
     // Email Template Change Listener
@@ -2297,20 +2393,20 @@ ${EMAIL_SIGN_OFF_PLAIN}`
         setText('quickEmailCharCount', `${this.value.length} characters`);
     });
 
+    // Copy Formatted Email (Rich HTML + Plain Text fallback)
     document.getElementById('btnCopyEmailBody')?.addEventListener('click', function() {
         const subject = document.getElementById('quickEmailSubject')?.value || '';
         const rawContent = getSummernoteHtml();
         const formattedPlain = htmlToFormattedText(rawContent);
         const fullText = `Subject: ${subject}\n\n${formattedPlain}`;
 
-        // Attempt rich clipboard write if supported, fallback to text
         if (navigator.clipboard && window.ClipboardItem) {
             const blobHtml = new Blob([`<p><strong>Subject: ${escapeHtml(subject)}</strong></p>${rawContent}`], { type: 'text/html' });
             const blobText = new Blob([fullText], { type: 'text/plain' });
             navigator.clipboard.write([
                 new ClipboardItem({ 'text/html': blobHtml, 'text/plain': blobText })
             ]).then(() => {
-                crmToast('Formatted email copied to clipboard!', 'success');
+                crmToast('Formatted email copied! Paste with Ctrl+V into Gmail or Outlook.', 'success');
             }).catch(() => {
                 navigator.clipboard.writeText(fullText).then(() => {
                     crmToast('Email text copied to clipboard!', 'success');
@@ -2325,6 +2421,45 @@ ${EMAIL_SIGN_OFF_PLAIN}`
         }
     });
 
+    // Dispatch Email via Gmail Web
+    async function executeSendEmailViaGmail() {
+        const l = window.currentOffcanvasLead;
+        if (!l) return;
+        const recipient = document.getElementById('quickEmailTo')?.value?.trim() || '';
+        if (!recipient) {
+            alert('Please enter a recipient email address.');
+            return;
+        }
+        const subject = document.getElementById('quickEmailSubject')?.value?.trim() || 'Admission Enquiry';
+        const rawHtml = getSummernoteHtml();
+        const bodyPlain = htmlToFormattedText(rawHtml);
+        if (!bodyPlain) {
+            alert('Please enter email content.');
+            return;
+        }
+
+        const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(recipient)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyPlain)}`;
+        window.open(gmailUrl, '_blank');
+
+        if (document.getElementById('quickEmailLogActivity')?.checked) {
+            await recordQuickCommunication(
+                'email',
+                'Email Sent (Gmail Web)',
+                `Subject: ${subject} | ${bodyPlain.length > 200 ? bodyPlain.substring(0, 200) + '...' : bodyPlain}`,
+                `Sent email via Gmail Web to ${recipient}:\nSubject: ${subject}\n\n${bodyPlain.length > 200 ? bodyPlain.substring(0, 200) + '...' : bodyPlain}`
+            );
+        }
+
+        const modalEl = document.getElementById('leadQuickEmailModal');
+        if (modalEl && typeof bootstrap !== 'undefined') {
+            const inst = bootstrap.Modal.getInstance(modalEl);
+            if (inst) inst.hide();
+        }
+    }
+
+    document.getElementById('btnSendViaGmail')?.addEventListener('click', executeSendEmailViaGmail);
+
+    // Dispatch Email via Default System Mail Client (Outlook / Mailto)
     document.getElementById('btnConfirmSendEmail')?.addEventListener('click', async function() {
         const l = window.currentOffcanvasLead;
         if (!l) return;
@@ -2341,40 +2476,20 @@ ${EMAIL_SIGN_OFF_PLAIN}`
             return;
         }
 
-        // Open mailto link with cleanly formatted plain text
-        const mailtoUrl = `mailto:${encodeURIComponent(recipient)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyPlain)}`;
+        // CRLF linebreaks for mailto compatibility
+        const crlfBody = bodyPlain.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n');
+        const mailtoUrl = `mailto:${encodeURIComponent(recipient)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(crlfBody)}`;
         window.location.href = mailtoUrl;
 
         // Optionally record in activity timeline
         const logActivity = document.getElementById('quickEmailLogActivity')?.checked;
         if (logActivity) {
-            try {
-                const formData = new FormData();
-                formData.append('lead_id', l.id);
-                formData.append('contact_method', 'Email');
-                formData.append('outcome', 'Email Sent');
-                formData.append('remarks', `Subject: ${subject} | ${bodyPlain.length > 200 ? bodyPlain.substring(0, 200) + '...' : bodyPlain}`);
-                formData.append('lead_status', l.status);
-                formData.append('_csrf_token', window.CSRF_TOKEN || document.querySelector('input[name="_csrf_token"]')?.value || '');
-
-                const res = await fetch(getAppUrl('followups/store'), {
-                    method: 'POST',
-                    body: formData,
-                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
-                });
-                const data = await res.json();
-                if (data.status === 'success') {
-                    appendActivityToOffcanvas(l.id, {
-                        type: 'email',
-                        author: data.author || 'Staff',
-                        time: data.formatted_time || 'Today',
-                        remarks: `Sent Email (${subject}) to ${recipient}`
-                    });
-                    crmToast('Email activity logged in timeline.', 'success');
-                }
-            } catch (err) {
-                console.error('Followup log error:', err);
-            }
+            await recordQuickCommunication(
+                'email',
+                'Email Sent (Default App)',
+                `Subject: ${subject} | ${bodyPlain.length > 200 ? bodyPlain.substring(0, 200) + '...' : bodyPlain}`,
+                `Sent email to ${recipient}:\nSubject: ${subject}\n\n${bodyPlain.length > 200 ? bodyPlain.substring(0, 200) + '...' : bodyPlain}`
+            );
         }
 
         const modalEl = document.getElementById('leadQuickEmailModal');

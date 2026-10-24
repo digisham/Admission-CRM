@@ -1506,13 +1506,17 @@ $renderTimelineItem = function(array $item) {
                     </label>
                 </div>
             </div>
-            <div class="modal-footer py-2.5 px-4 bg-white border-top d-flex align-items-center justify-content-between">
+            <div class="modal-footer py-2.5 px-4 bg-white border-top d-flex align-items-center justify-content-between flex-wrap gap-2">
                 <button type="button" class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1 shadow-none" id="btnCopyWhatsAppMsg" title="Copy to clipboard">
                     <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
-                    <span>Copy</span>
+                    <span>Copy Text</span>
                 </button>
                 <div class="d-flex align-items-center gap-2">
                     <button type="button" class="btn btn-sm btn-light border px-3" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-sm btn-outline-success d-inline-flex align-items-center gap-1 shadow-sm" id="btnSendWhatsAppWeb" title="Open directly in WhatsApp Web in browser">
+                        <i data-lucide="globe" style="width: 14px; height: 14px;"></i>
+                        <span>WhatsApp Web</span>
+                    </button>
                     <button type="button" class="btn btn-sm text-white px-3.5 d-inline-flex align-items-center gap-1.5 shadow-sm" id="btnConfirmSendWhatsApp" style="background: #25d366; font-weight: 600;">
                         <i data-lucide="send" style="width: 14px; height: 14px;"></i>
                         <span>Send on WhatsApp</span>
@@ -1597,16 +1601,20 @@ $renderTimelineItem = function(array $item) {
                     </label>
                 </div>
             </div>
-            <div class="modal-footer py-2.5 px-4 bg-white border-top d-flex align-items-center justify-content-between">
-                <button type="button" class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1 shadow-none" id="btnCopyEmailBody" title="Copy email text">
+            <div class="modal-footer py-2.5 px-4 bg-white border-top d-flex align-items-center justify-content-between flex-wrap gap-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1 shadow-none" id="btnCopyEmailBody" title="Copy formatted text to clipboard">
                     <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
-                    <span>Copy Text</span>
+                    <span>Copy Formatted</span>
                 </button>
                 <div class="d-flex align-items-center gap-2">
                     <button type="button" class="btn btn-sm btn-light border px-3" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-sm btn-primary px-3.5 d-inline-flex align-items-center gap-1.5 shadow-sm" id="btnConfirmSendEmail" style="font-weight: 600;">
+                    <button type="button" class="btn btn-sm text-white d-inline-flex align-items-center gap-1.5 shadow-sm" id="btnSendViaGmail" style="background: #ea4335; font-weight: 600;" title="Open and compose directly in Gmail Web in new tab">
                         <i data-lucide="mail" style="width: 14px; height: 14px;"></i>
-                        <span>Open Email & Send</span>
+                        <span>Open in Gmail</span>
+                    </button>
+                    <button type="button" class="btn btn-sm btn-primary px-3 d-inline-flex align-items-center gap-1.5 shadow-sm" id="btnConfirmSendEmail" style="font-weight: 600;" title="Open in Outlook / Default Mail App">
+                        <i data-lucide="external-link" style="width: 14px; height: 14px;"></i>
+                        <span>Outlook / App</span>
                     </button>
                 </div>
             </div>
