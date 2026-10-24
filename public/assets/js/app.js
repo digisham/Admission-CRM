@@ -2322,14 +2322,17 @@ ${EMAIL_SIGN_OFF_PLAIN}`
         });
     });
 
-    // Send WhatsApp (Auto / App)
-    async function executeSendWhatsApp(useWebOnly = false) {
+    // Send WhatsApp with automatic platform intelligence & popup protection
+    function executeSendWhatsApp(mode = 'auto') {
         const l = window.currentOffcanvasLead;
-        if (!l) return;
+        if (!l) {
+            alert('Lead details are not loaded. Please refresh the page and try again.');
+            return;
+        }
         const raw = l.clean_mobile || l.mobile || '';
         const validDigits = extractValidIndianMobile(raw);
         if (!validDigits || validDigits.length < 10) {
-            alert(`This candidate does not have a valid 10-digit mobile number recorded (Found: "${raw}"). Please update the candidate mobile number first.`);
+            alert(`This candidate does not have a valid 10-digit mobile number recorded (Found: "${raw}"). Please check and edit the candidate mobile number.`);
             return;
         }
         const fullWaPhone = '91' + validDigits;
@@ -2343,20 +2346,33 @@ ${EMAIL_SIGN_OFF_PLAIN}`
         const cleanMsg = msg.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
         const encodedText = encodeURIComponent(cleanMsg);
 
-        const waUrl = useWebOnly
-            ? `https://web.whatsapp.com/send?phone=${fullWaPhone}&text=${encodedText}`
-            : `https://api.whatsapp.com/send?phone=${fullWaPhone}&text=${encodedText}`;
+        // Detect mobile vs desktop
+        const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
-        const openedWin = window.open(waUrl, '_blank');
-        if (!openedWin) {
-            // Popup blocked fallback
-            window.location.href = waUrl;
+        let waUrl;
+        if (mode === 'app' || (mode === 'auto' && isMobile)) {
+            // Native WhatsApp mobile/desktop protocol handler
+            waUrl = `https://wa.me/${fullWaPhone}?text=${encodedText}`;
+        } else {
+            // Desktop browser: WhatsApp Web loads chat directly with prefilled message
+            waUrl = `https://web.whatsapp.com/send?phone=${fullWaPhone}&text=${encodedText}`;
         }
+
+        // Open in new tab using anchor element (immune to browser popup blocker)
+        const a = document.createElement('a');
+        a.href = waUrl;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => a.remove(), 100);
+
+        crmToast('Opening WhatsApp with your formatted message...', 'success');
 
         // Record interaction in timeline
         const logActivity = document.getElementById('quickWaLogActivity')?.checked;
         if (logActivity) {
-            await recordQuickCommunication(
+            recordQuickCommunication(
                 'whatsapp',
                 'WhatsApp Message Sent',
                 cleanMsg.length > 250 ? (cleanMsg.substring(0, 250) + '...') : cleanMsg,
@@ -2366,18 +2382,10 @@ ${EMAIL_SIGN_OFF_PLAIN}`
 
         const modalEl = document.getElementById('leadQuickWhatsAppModal');
         if (modalEl && typeof bootstrap !== 'undefined') {
-            const inst = bootstrap.Modal.getInstance(modalEl);
+            const inst = bootstrap.Modal.getInstance(modalEl) || bootstrap.Modal.getOrCreateInstance(modalEl);
             if (inst) inst.hide();
         }
     }
-
-    document.getElementById('btnConfirmSendWhatsApp')?.addEventListener('click', function() {
-        executeSendWhatsApp(false);
-    });
-
-    document.getElementById('btnSendWhatsAppWeb')?.addEventListener('click', function() {
-        executeSendWhatsApp(true);
-    });
 
     // Email Template Change Listener
     document.getElementById('quickEmailTemplateSelect')?.addEventListener('change', function() {
@@ -2396,7 +2404,7 @@ ${EMAIL_SIGN_OFF_PLAIN}`
     });
 
     // Copy Formatted Email (Rich HTML + Plain Text fallback)
-    document.getElementById('btnCopyEmailBody')?.addEventListener('click', function() {
+    function executeCopyEmailBody() {
         const subject = document.getElementById('quickEmailSubject')?.value || '';
         const rawContent = getSummernoteHtml();
         const formattedPlain = htmlToFormattedText(rawContent);
@@ -2421,10 +2429,10 @@ ${EMAIL_SIGN_OFF_PLAIN}`
                 crmToast('Failed to copy email', 'error');
             });
         }
-    });
+    }
 
     // Dispatch Email via Gmail Web
-    async function executeSendEmailViaGmail() {
+    function executeSendEmailViaGmail() {
         const l = window.currentOffcanvasLead;
         if (!l) return;
         const recipient = document.getElementById('quickEmailTo')?.value?.trim() || '';
@@ -2441,10 +2449,19 @@ ${EMAIL_SIGN_OFF_PLAIN}`
         }
 
         const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(recipient)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyPlain)}`;
-        window.open(gmailUrl, '_blank');
+        
+        const a = document.createElement('a');
+        a.href = gmailUrl;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => a.remove(), 100);
+
+        crmToast('Opening Gmail Web with your formatted email...', 'success');
 
         if (document.getElementById('quickEmailLogActivity')?.checked) {
-            await recordQuickCommunication(
+            recordQuickCommunication(
                 'email',
                 'Email Sent (Gmail Web)',
                 `Subject: ${subject} | ${bodyPlain.length > 200 ? bodyPlain.substring(0, 200) + '...' : bodyPlain}`,
@@ -2454,15 +2471,13 @@ ${EMAIL_SIGN_OFF_PLAIN}`
 
         const modalEl = document.getElementById('leadQuickEmailModal');
         if (modalEl && typeof bootstrap !== 'undefined') {
-            const inst = bootstrap.Modal.getInstance(modalEl);
+            const inst = bootstrap.Modal.getInstance(modalEl) || bootstrap.Modal.getOrCreateInstance(modalEl);
             if (inst) inst.hide();
         }
     }
 
-    document.getElementById('btnSendViaGmail')?.addEventListener('click', executeSendEmailViaGmail);
-
     // Dispatch Email via Default System Mail Client (Outlook / Mailto)
-    document.getElementById('btnConfirmSendEmail')?.addEventListener('click', async function() {
+    function executeSendEmailViaDefaultClient() {
         const l = window.currentOffcanvasLead;
         if (!l) return;
         const recipient = document.getElementById('quickEmailTo')?.value?.trim() || '';
@@ -2486,7 +2501,7 @@ ${EMAIL_SIGN_OFF_PLAIN}`
         // Optionally record in activity timeline
         const logActivity = document.getElementById('quickEmailLogActivity')?.checked;
         if (logActivity) {
-            await recordQuickCommunication(
+            recordQuickCommunication(
                 'email',
                 'Email Sent (Default App)',
                 `Subject: ${subject} | ${bodyPlain.length > 200 ? bodyPlain.substring(0, 200) + '...' : bodyPlain}`,
@@ -2496,8 +2511,73 @@ ${EMAIL_SIGN_OFF_PLAIN}`
 
         const modalEl = document.getElementById('leadQuickEmailModal');
         if (modalEl && typeof bootstrap !== 'undefined') {
-            const inst = bootstrap.Modal.getInstance(modalEl);
+            const inst = bootstrap.Modal.getInstance(modalEl) || bootstrap.Modal.getOrCreateInstance(modalEl);
             if (inst) inst.hide();
+        }
+    }
+
+    // Universal Document Event Delegation for All Modal Actions (Immune to Timing / DOM Replacements)
+    document.addEventListener('click', (e) => {
+        // 1. Send WhatsApp (Auto / Web default on desktop)
+        const sendWaBtn = e.target.closest('#btnConfirmSendWhatsApp, .btn-confirm-send-whatsapp');
+        if (sendWaBtn) {
+            e.preventDefault();
+            executeSendWhatsApp('auto');
+            return;
+        }
+
+        // 2. Direct WhatsApp Web Button
+        const sendWaWebBtn = e.target.closest('#btnSendWhatsAppWeb, .btn-send-whatsapp-web');
+        if (sendWaWebBtn) {
+            e.preventDefault();
+            executeSendWhatsApp('web');
+            return;
+        }
+
+        // 3. Direct WhatsApp App Button
+        const sendWaAppBtn = e.target.closest('#btnSendWhatsAppApp, .btn-send-whatsapp-app');
+        if (sendWaAppBtn) {
+            e.preventDefault();
+            executeSendWhatsApp('app');
+            return;
+        }
+
+        // 4. Copy WhatsApp Text
+        const copyWaBtn = e.target.closest('#btnCopyWhatsAppMsg, .btn-copy-whatsapp-msg');
+        if (copyWaBtn) {
+            e.preventDefault();
+            const msg = document.getElementById('quickWaMessage')?.value || '';
+            if (!msg) return;
+            navigator.clipboard.writeText(msg).then(() => {
+                crmToast('Formatted WhatsApp message copied to clipboard!', 'success');
+            }).catch(() => {
+                crmToast('Failed to copy text', 'error');
+            });
+            return;
+        }
+
+        // 5. Send via Gmail Web
+        const sendGmailBtn = e.target.closest('#btnSendViaGmail, .btn-send-via-gmail');
+        if (sendGmailBtn) {
+            e.preventDefault();
+            executeSendEmailViaGmail();
+            return;
+        }
+
+        // 6. Send via Default Mail App (Outlook)
+        const sendEmailBtn = e.target.closest('#btnConfirmSendEmail, .btn-confirm-send-email');
+        if (sendEmailBtn) {
+            e.preventDefault();
+            executeSendEmailViaDefaultClient();
+            return;
+        }
+
+        // 7. Copy Formatted Email
+        const copyEmailBtn = e.target.closest('#btnCopyEmailBody, .btn-copy-email-body');
+        if (copyEmailBtn) {
+            e.preventDefault();
+            executeCopyEmailBody();
+            return;
         }
     });
 
