@@ -1,4 +1,4 @@
-# GD Goenka Public School, Purnea — School Admission CRM & Lead Management System
+# School Admission CRM & Lead Management System
 
 A secure, production-grade **School Admission CRM & Lead Management System** custom-built for **GD Goenka Public School, Purnea** to manage student admission enquiries for the **2027–28 academic session** and future sessions.
 
