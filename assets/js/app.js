@@ -2117,6 +2117,8 @@ ${EMAIL_SIGN_OFF_PLAIN}`
             textarea.setSelectionRange(newCursorPos, newCursorPos);
             setText('quickWaCharCount', `${textarea.value.length} characters`);
         }
+    });
+
     // Helper to sanitize any Indian phone number into exactly 10 digits
     function extractValidIndianMobile(raw) {
         if (!raw) return '';
