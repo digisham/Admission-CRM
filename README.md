@@ -83,7 +83,7 @@ mysql -u root school_admission_crm < database/seeds.sql
 ### 2. Environment Configuration
 Check `.env` in the root directory:
 ```ini
-APP_NAME="GD Goenka School Admission CRM"
+APP_NAME="School Admission CRM"
 APP_ENV=development
 APP_DEBUG=true
 
