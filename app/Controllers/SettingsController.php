@@ -10,7 +10,7 @@ class SettingsController
 {
     public function index(): void
     {
-        if (!Auth::isAdmin()) {
+        if (!Auth::isSuperAdmin()) {
             View::flash('error', 'Only administrators can access system settings.');
             View::redirect(View::url('dashboard'));
         }
@@ -30,7 +30,7 @@ class SettingsController
 
     public function update(): void
     {
-        if (!Auth::isAdmin()) {
+        if (!Auth::isSuperAdmin()) {
             View::flash('error', 'Unauthorized.');
             View::redirect(View::url('settings'));
         }

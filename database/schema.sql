@@ -130,9 +130,11 @@ CREATE TABLE `tasks` (
   `completion_remarks` TEXT NULL,
   `created_by` INT NULL,
   `completed_at` DATETIME NULL,
+  `completed_by` INT NULL,
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX `idx_tasks_assigned` (`assigned_to`),
+  INDEX `idx_tasks_completed_by` (`completed_by`),
   INDEX `idx_tasks_due` (`due_date`),
   INDEX `idx_tasks_status` (`status`),
   INDEX `idx_tasks_session` (`session_id`),
@@ -145,8 +147,8 @@ CREATE TABLE `tasks` (
 CREATE TABLE `follow_up_logs` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `lead_id` INT NOT NULL,
-  `contact_method` ENUM('Phone', 'WhatsApp', 'Email', 'In Person', 'Other') NOT NULL DEFAULT 'Phone',
-  `outcome` ENUM('No Answer', 'Busy', 'Call Back Requested', 'Interested', 'Not Interested', 'Visit Scheduled', 'Documents Requested', 'Other') NOT NULL,
+  `contact_method` VARCHAR(50) NOT NULL DEFAULT 'Phone',
+  `outcome` VARCHAR(50) NOT NULL DEFAULT 'Other',
   `remarks` TEXT NOT NULL,
   `next_followup_date` DATETIME NULL,
   `created_by` INT NOT NULL,
@@ -242,3 +244,24 @@ CREATE TABLE `school_settings` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 14. Notifications
+CREATE TABLE `notifications` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `user_id` INT NOT NULL,
+  `sender_id` INT NULL,
+  `lead_id` INT NULL,
+  `type` VARCHAR(50) NOT NULL,
+  `title` VARCHAR(255) NOT NULL,
+  `message` TEXT NOT NULL,
+  `link` VARCHAR(255) NULL,
+  `is_read` TINYINT(1) NOT NULL DEFAULT 0,
+  `read_at` DATETIME NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_notif_user` (`user_id`, `is_read`),
+  INDEX `idx_notif_created` (`created_at`),
+  CONSTRAINT `fk_notif_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_notif_sender` FOREIGN KEY (`sender_id`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_notif_lead` FOREIGN KEY (`lead_id`) REFERENCES `leads` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+

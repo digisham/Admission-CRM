@@ -8,6 +8,7 @@ use App\Models\AcademicSession;
 use App\Models\ImportBatch;
 use App\Services\CsvExportService;
 use App\Services\CsvImportService;
+use App\Services\SimpleXlsxService;
 
 class ImportController
 {
@@ -46,15 +47,15 @@ class ImportController
         }
 
         if (empty($_FILES['csv_file']) || $_FILES['csv_file']['error'] !== UPLOAD_ERR_OK) {
-            View::flash('error', 'Please select a valid CSV/Excel file to upload.');
+            View::flash('error', 'Please select a valid CSV (.csv) or Excel (.xlsx) file to upload.');
             View::redirect(View::url('import'));
         }
 
         $file = $_FILES['csv_file'];
         $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
 
-        if ($ext !== 'csv') {
-            View::flash('error', 'Please upload a CSV format file (.csv). You can save any Excel sheet as CSV UTF-8.');
+        if (!in_array($ext, ['csv', 'xlsx'])) {
+            View::flash('error', 'Please upload a CSV format file (.csv) or Excel spreadsheet (.xlsx).');
             View::redirect(View::url('import'));
         }
 
@@ -67,9 +68,23 @@ class ImportController
         $tempFileName = 'import_' . time() . '_' . bin2hex(random_bytes(6)) . '.csv';
         $destination = $importDir . $tempFileName;
 
-        if (!move_uploaded_file($file['tmp_name'], $destination)) {
-            View::flash('error', 'Failed to store uploaded file on server.');
-            View::redirect(View::url('import'));
+        if ($ext === 'xlsx') {
+            $rawXlsx = $importDir . 'raw_' . time() . '_' . bin2hex(random_bytes(4)) . '.xlsx';
+            if (!move_uploaded_file($file['tmp_name'], $rawXlsx)) {
+                View::flash('error', 'Failed to store uploaded Excel file on server.');
+                View::redirect(View::url('import'));
+            }
+            $converted = SimpleXlsxService::convertToCsv($rawXlsx, $destination);
+            @unlink($rawXlsx);
+            if (!$converted || !file_exists($destination)) {
+                View::flash('error', 'Unable to parse Excel (.xlsx) file. Please ensure it is a valid Excel workbook.');
+                View::redirect(View::url('import'));
+            }
+        } else {
+            if (!move_uploaded_file($file['tmp_name'], $destination)) {
+                View::flash('error', 'Failed to store uploaded file on server.');
+                View::redirect(View::url('import'));
+            }
         }
 
         // Check if identical file was previously imported
@@ -134,6 +149,7 @@ class ImportController
         $filePath = dirname(__DIR__, 2) . '/storage/imports/' . $tempFile;
         $sessionId = (int)($_POST['session_id'] ?? AcademicSession::getActive()['id']);
         $duplicateAction = $_POST['duplicate_action'] ?? 'skip';
+        $assignStrategy = $_POST['assign_strategy'] ?? 'round_robin';
         $mapping = $_POST['mapping'] ?? [];
 
         if (!file_exists($filePath)) {
@@ -141,7 +157,7 @@ class ImportController
             View::redirect(View::url('import'));
         }
 
-        $result = CsvImportService::commitImport($filePath, $mapping, $sessionId, $duplicateAction, $originalName);
+        $result = CsvImportService::commitImport($filePath, $mapping, $sessionId, $duplicateAction, $originalName, $assignStrategy);
 
         // Clean up temp file
         @unlink($filePath);
@@ -177,5 +193,117 @@ class ImportController
             'errors' => $errors,
             'allBatches' => $allBatches,
         ]);
+    }
+
+    public function deleteError(): void
+    {
+        if (!Auth::isAdmin()) {
+            if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+                View::json(['error' => 'Unauthorized'], 403);
+            }
+            View::flash('error', 'Unauthorized.');
+            View::redirect(View::url('import'));
+        }
+
+        $id = (int)($_POST['id'] ?? $_GET['id'] ?? 0);
+        $batchId = (int)($_POST['batch_id'] ?? $_GET['batch_id'] ?? 0);
+
+        if ($id <= 0) {
+            if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+                View::json(['error' => 'Invalid error log ID.'], 400);
+            }
+            View::flash('error', 'Invalid error record.');
+            View::redirect(View::url('import/history&id=' . $batchId));
+        }
+
+        ImportBatch::deleteError($id, $batchId);
+
+        if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+            View::json([
+                'success' => true,
+                'message' => 'Error log deleted successfully.',
+                'deleted_id' => $id,
+                'batch_id' => $batchId
+            ]);
+        }
+
+        View::flash('success', 'Error log item deleted.');
+        View::redirect(View::url('import/history&id=' . $batchId));
+    }
+
+    public function deleteErrors(): void
+    {
+        if (!Auth::isAdmin()) {
+            if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+                View::json(['error' => 'Unauthorized'], 403);
+            }
+            View::flash('error', 'Unauthorized.');
+            View::redirect(View::url('import'));
+        }
+
+        $rawIds = $_POST['ids'] ?? [];
+        if (is_string($rawIds)) {
+            $rawIds = explode(',', $rawIds);
+        }
+        $ids = array_filter(array_map('intval', (array)$rawIds));
+        $batchId = (int)($_POST['batch_id'] ?? 0);
+
+        if (empty($ids)) {
+            if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+                View::json(['error' => 'No error logs selected for deletion.'], 400);
+            }
+            View::flash('error', 'No records selected.');
+            View::redirect(View::url('import/history&id=' . $batchId));
+        }
+
+        $deletedCount = ImportBatch::deleteErrors($ids, $batchId);
+
+        if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+            View::json([
+                'success' => true,
+                'message' => "{$deletedCount} error logs deleted successfully.",
+                'deleted_count' => $deletedCount,
+                'deleted_ids' => $ids,
+                'batch_id' => $batchId
+            ]);
+        }
+
+        View::flash('success', "{$deletedCount} error logs deleted successfully.");
+        View::redirect(View::url('import/history&id=' . $batchId));
+    }
+
+    public function clearErrors(): void
+    {
+        if (!Auth::isAdmin()) {
+            if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+                View::json(['error' => 'Unauthorized'], 403);
+            }
+            View::flash('error', 'Unauthorized.');
+            View::redirect(View::url('import'));
+        }
+
+        $batchId = (int)($_POST['batch_id'] ?? 0);
+
+        if ($batchId <= 0) {
+            if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+                View::json(['error' => 'Invalid batch ID.'], 400);
+            }
+            View::flash('error', 'Invalid batch ID.');
+            View::redirect(View::url('import'));
+        }
+
+        $deletedCount = ImportBatch::clearAllErrors($batchId);
+
+        if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+            View::json([
+                'success' => true,
+                'message' => "All {$deletedCount} error logs cleared.",
+                'deleted_count' => $deletedCount,
+                'batch_id' => $batchId
+            ]);
+        }
+
+        View::flash('success', "All {$deletedCount} error logs cleared.");
+        View::redirect(View::url('import/history&id=' . $batchId));
     }
 }

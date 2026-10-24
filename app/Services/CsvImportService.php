@@ -7,7 +7,9 @@ use App\Helpers\Sanitizer;
 use App\Models\AcademicSession;
 use App\Models\ImportBatch;
 use App\Models\Lead;
+use App\Models\Notification;
 use App\Models\Setting;
+use App\Models\Task;
 use App\Models\User;
 
 class CsvImportService
@@ -108,6 +110,7 @@ class CsvImportService
             // Map data
             $mappedData = [];
             foreach ($mapping as $targetField => $sourceHeader) {
+                if (empty($sourceHeader)) continue;
                 $idx = array_search($sourceHeader, $headers, true);
                 $mappedData[$targetField] = ($idx !== false && isset($row[$idx])) ? trim($row[$idx]) : '';
             }
@@ -115,29 +118,70 @@ class CsvImportService
             $rowErrors = [];
             $rowWarnings = [];
 
-            // 1. Student Name required
-            if (empty($mappedData['student_name'])) {
+            // 1. Student Name (Required)
+            $studentName = trim($mappedData['student_name'] ?? '');
+            if (empty($studentName)) {
                 $rowErrors[] = "Student Name is required.";
             }
 
-            // 2. Mobile required & valid
-            $cleanMobile = Sanitizer::cleanPhone($mappedData['mobile'] ?? '');
-            if (empty($cleanMobile)) {
-                $rowErrors[] = "Mobile Number is required.";
-            } elseif (strlen($cleanMobile) < 10) {
-                $rowErrors[] = "Mobile Number must have at least 10 digits.";
+            // 2. Mobile validation & alternate contact fallback
+            $rawMobile = $mappedData['mobile'] ?? '';
+            $cleanMobile = Sanitizer::cleanPhone($rawMobile);
+            $digits = preg_replace('/\D/', '', $cleanMobile);
+            if (strlen($digits) === 11 && str_starts_with($digits, '0')) {
+                $digits = substr($digits, 1);
+            } elseif (strlen($digits) === 12 && str_starts_with($digits, '91')) {
+                $digits = substr($digits, 2);
             }
 
-            // 3. Class Applied
+            if (empty($digits)) {
+                $rawAlt = $mappedData['alternate_mobile'] ?? '';
+                $altDigits = preg_replace('/\D/', '', Sanitizer::cleanPhone($rawAlt));
+                if (strlen($altDigits) === 11 && str_starts_with($altDigits, '0')) {
+                    $altDigits = substr($altDigits, 1);
+                } elseif (strlen($altDigits) === 12 && str_starts_with($altDigits, '91')) {
+                    $altDigits = substr($altDigits, 2);
+                }
+                if (!empty($altDigits) && strlen($altDigits) >= 10) {
+                    $digits = $altDigits;
+                    $cleanMobile = $altDigits;
+                    $rowWarnings[] = "Mobile was empty; used alternate number.";
+                } else {
+                    $digits = 'N/A';
+                    $cleanMobile = 'N/A';
+                    $rowWarnings[] = "Mobile was empty; defaulted to 'N/A'.";
+                }
+            } elseif (strlen($digits) < 10) {
+                $rowWarnings[] = "Mobile number has fewer than 10 digits; imported as provided.";
+            }
+
+            // 3. Graceful defaults for all optional columns if left empty
+            if (empty($mappedData['parent_name'])) {
+                $mappedData['parent_name'] = 'Parent / Guardian';
+            }
+
             if (empty($mappedData['class_applied'])) {
                 $mappedData['class_applied'] = 'Grade 1';
-                $rowWarnings[] = "Defaulted Class Applied to Grade 1.";
             }
+
+            if (empty($mappedData['enquiry_source'])) {
+                $mappedData['enquiry_source'] = 'Direct Walk-in';
+            }
+
+            $rawPriority = ucfirst(strtolower(trim($mappedData['priority'] ?? '')));
+            $mappedData['priority'] = in_array($rawPriority, ['Low', 'Medium', 'High', 'Urgent']) ? $rawPriority : 'Medium';
+
+            if (empty($mappedData['city'])) {
+                $mappedData['city'] = 'Purnea';
+            }
+
+            // All imported records strictly show status 'New'
+            $mappedData['status'] = 'New';
 
             // 4. Duplicate check
             $isDuplicate = false;
-            if (!empty($cleanMobile)) {
-                $dups = Lead::findDuplicates($cleanMobile, $sessionId);
+            if (!empty($digits) && $digits !== 'N/A' && strlen($digits) >= 10) {
+                $dups = Lead::findDuplicates($digits, $sessionId);
                 if (!empty($dups)) {
                     $isDuplicate = true;
                     $results['duplicates']++;
@@ -148,13 +192,13 @@ class CsvImportService
             // 5. Assigned Employee check
             $assignedId = null;
             if (!empty($mappedData['assigned_to'])) {
-                $val = strtolower($mappedData['assigned_to']);
+                $val = strtolower(trim($mappedData['assigned_to']));
                 if (isset($counselorMap[$val])) {
                     $assignedId = $counselorMap[$val];
                 } elseif (is_numeric($val) && User::find((int)$val)) {
                     $assignedId = (int)$val;
                 } else {
-                    $rowWarnings[] = "Unknown employee '{$mappedData['assigned_to']}'; will leave unassigned.";
+                    $rowWarnings[] = "Counselor '{$mappedData['assigned_to']}' will be assigned via equal distribution.";
                 }
             }
 
@@ -185,7 +229,7 @@ class CsvImportService
         return $results;
     }
 
-    public static function commitImport(string $filePath, array $mapping, int $sessionId, string $duplicateAction = 'skip', ?string $originalFilename = null): array
+    public static function commitImport(string $filePath, array $mapping, int $sessionId, string $duplicateAction = 'skip', ?string $originalFilename = null, string $assignStrategy = 'round_robin'): array
     {
         if (!file_exists($filePath)) {
             return ['error' => 'File not found.'];
@@ -210,6 +254,11 @@ class CsvImportService
             $counselorMap[strtolower($c['email'])] = $c['id'];
         }
 
+        $admissionCounselors = User::getAdmissionCounselors();
+        $counselorCount = count($admissionCounselors);
+        $counselorIndex = 0;
+        $counselorCounts = [];
+
         $batchId = ImportBatch::create($fileName, $fileHash, 0);
 
         $total = 0;
@@ -231,33 +280,106 @@ class CsvImportService
 
                 $mapped = [];
                 foreach ($mapping as $targetField => $sourceHeader) {
+                    if (empty($sourceHeader)) continue;
                     $idx = array_search($sourceHeader, $headers, true);
                     $mapped[$targetField] = ($idx !== false && isset($row[$idx])) ? trim($row[$idx]) : '';
                 }
 
-                // Required field check
-                $cleanMobile = Sanitizer::cleanPhone($mapped['mobile'] ?? '');
-                if (empty($mapped['student_name']) || empty($cleanMobile) || strlen($cleanMobile) < 10) {
+                // 1. Required: Student Name
+                $studentName = trim($mapped['student_name'] ?? '');
+                if (empty($studentName)) {
                     $failed++;
-                    ImportBatch::logRowError($batchId, $rowNum, "Missing student name or valid 10-digit mobile number.", $mapped);
+                    ImportBatch::logRowError($batchId, $rowNum, "Missing student name in row {$rowNum}.", $mapped);
                     continue;
                 }
 
-                // Check duplicate
-                $dups = Lead::findDuplicates($cleanMobile, $sessionId);
+                // 2. Mobile validation with normalization
+                $cleanMobile = Sanitizer::cleanPhone($mapped['mobile'] ?? '');
+                $digits = preg_replace('/\D/', '', $cleanMobile);
+                if (strlen($digits) === 11 && str_starts_with($digits, '0')) {
+                    $digits = substr($digits, 1);
+                } elseif (strlen($digits) === 12 && str_starts_with($digits, '91')) {
+                    $digits = substr($digits, 2);
+                }
+
+                // Check alternate mobile fallback if mobile column was empty or invalid
+                if (empty($digits) || strlen($digits) < 10) {
+                    $rawAlt = $mapped['alternate_mobile'] ?? '';
+                    $altDigits = preg_replace('/\D/', '', Sanitizer::cleanPhone($rawAlt));
+                    if (strlen($altDigits) === 11 && str_starts_with($altDigits, '0')) {
+                        $altDigits = substr($altDigits, 1);
+                    } elseif (strlen($altDigits) === 12 && str_starts_with($altDigits, '91')) {
+                        $altDigits = substr($altDigits, 2);
+                    }
+                    if (!empty($altDigits) && strlen($altDigits) >= 10) {
+                        $digits = $altDigits;
+                    } else {
+                        // Graceful fallback to 'N/A' so records without mobile are safely imported
+                        $digits = (!empty($cleanMobile) && $cleanMobile !== '') ? $cleanMobile : 'N/A';
+                    }
+                }
+                $finalMobile = $digits;
+
+                // 3. Graceful defaults for all optional columns left empty
+                $parentName = !empty($mapped['parent_name']) ? trim($mapped['parent_name']) : 'Parent / Guardian';
+                $classApplied = !empty($mapped['class_applied']) ? trim($mapped['class_applied']) : 'Grade 1';
+                $enquirySource = !empty($mapped['enquiry_source']) ? trim($mapped['enquiry_source']) : 'Direct Walk-in';
+                
+                $rawPriority = ucfirst(strtolower(trim($mapped['priority'] ?? '')));
+                $priority = in_array($rawPriority, ['Low', 'Medium', 'High', 'Urgent']) ? $rawPriority : 'Medium';
+                
+                $city = !empty($mapped['city']) ? trim($mapped['city']) : 'Purnea';
+                $address = !empty($mapped['address']) ? trim($mapped['address']) : null;
+                $remarks = !empty($mapped['remarks']) ? trim($mapped['remarks']) : 'Imported via CSV/Excel spreadsheet';
+                
+                $email = null;
+                if (!empty($mapped['email'])) {
+                    $cleanEmail = trim(strtolower($mapped['email']));
+                    if (!in_array($cleanEmail, ['na', 'n/a', 'none', 'null', '-']) && filter_var($cleanEmail, FILTER_VALIDATE_EMAIL)) {
+                        $email = $cleanEmail;
+                    }
+                }
+
+                $altMobile = null;
+                if (!empty($mapped['alternate_mobile'])) {
+                    $cleanedAlt = Sanitizer::cleanPhone($mapped['alternate_mobile']);
+                    $cleanedAltDigits = preg_replace('/\D/', '', $cleanedAlt);
+                    if (strlen($cleanedAltDigits) >= 10) {
+                        $altMobile = $cleanedAlt;
+                    }
+                }
+
+                $enquiryDate = date('Y-m-d');
+                if (!empty($mapped['enquiry_date'])) {
+                    $rawDate = trim($mapped['enquiry_date']);
+                    if (is_numeric($rawDate) && (float)$rawDate > 20000 && (float)$rawDate < 70000) {
+                        $enquiryDate = date('Y-m-d', ((int)$rawDate - 25569) * 86400);
+                    } else {
+                        $parsedTime = strtotime($rawDate);
+                        if ($parsedTime !== false && $parsedTime > 0) {
+                            $enquiryDate = date('Y-m-d', $parsedTime);
+                        }
+                    }
+                }
+
+                // Check duplicate (only for valid phone numbers)
+                $dups = [];
+                if (!empty($finalMobile) && $finalMobile !== 'N/A' && strlen($finalMobile) >= 10) {
+                    $dups = Lead::findDuplicates($finalMobile, $sessionId);
+                }
                 if (!empty($dups)) {
                     if ($duplicateAction === 'skip') {
                         $skipped++;
-                        ImportBatch::logRowError($batchId, $rowNum, "Skipped: Duplicate mobile {$cleanMobile} already exists ({$dups[0]['lead_ref']}).", $mapped);
+                        ImportBatch::logRowError($batchId, $rowNum, "Skipped: Duplicate mobile {$finalMobile} already exists ({$dups[0]['lead_ref']}).", $mapped);
                         continue;
                     } elseif ($duplicateAction === 'update') {
                         // Update existing record
                         $dupId = $dups[0]['id'];
                         Lead::update($dupId, [
-                            'student_name' => $mapped['student_name'],
-                            'parent_name' => $mapped['parent_name'] ?? $dups[0]['parent_name'],
-                            'class_applied' => $mapped['class_applied'] ?: $dups[0]['class_applied'],
-                            'remarks' => trim(($dups[0]['remarks'] ?? '') . "\n[Import Update]: " . ($mapped['remarks'] ?? 'Updated via Excel import'))
+                            'student_name' => $studentName,
+                            'parent_name' => !empty($mapped['parent_name']) ? trim($mapped['parent_name']) : $dups[0]['parent_name'],
+                            'class_applied' => !empty($mapped['class_applied']) ? trim($mapped['class_applied']) : $dups[0]['class_applied'],
+                            'remarks' => trim(($dups[0]['remarks'] ?? '') . "\n[Import Update]: " . $remarks)
                         ]);
                         $imported++;
                         continue;
@@ -265,10 +387,10 @@ class CsvImportService
                     // If duplicateAction is 'allow', proceed with creation
                 }
 
-                // Assigned employee
+                // Assigned employee determination
                 $assignedId = null;
                 if (!empty($mapped['assigned_to'])) {
-                    $val = strtolower($mapped['assigned_to']);
+                    $val = strtolower(trim($mapped['assigned_to']));
                     if (isset($counselorMap[$val])) {
                         $assignedId = $counselorMap[$val];
                     } elseif (is_numeric($val) && User::find((int)$val)) {
@@ -276,22 +398,30 @@ class CsvImportService
                     }
                 }
 
-                Lead::create([
+                // If strategy is round_robin (default), distribute equally among active Admission Counselors
+                if ($assignStrategy === 'round_robin' && $counselorCount > 0) {
+                    $assignedId = (int)$admissionCounselors[$counselorIndex % $counselorCount]['id'];
+                    $counselorIndex++;
+                    $counselorCounts[$assignedId] = ($counselorCounts[$assignedId] ?? 0) + 1;
+                }
+
+                // ALL imported records strictly set to status 'New'
+                $newLeadId = Lead::create([
                     'session_id' => $sessionId,
-                    'student_name' => $mapped['student_name'],
-                    'parent_name' => $mapped['parent_name'] ?? 'Parent / Guardian',
-                    'mobile' => $cleanMobile,
-                    'alternate_mobile' => Sanitizer::cleanPhone($mapped['alternate_mobile'] ?? null),
-                    'email' => !empty($mapped['email']) ? $mapped['email'] : null,
-                    'class_applied' => $mapped['class_applied'] ?: 'Grade 1',
-                    'enquiry_date' => !empty($mapped['enquiry_date']) ? date('Y-m-d', strtotime($mapped['enquiry_date'])) : date('Y-m-d'),
-                    'enquiry_source' => $mapped['enquiry_source'] ?: 'Excel Import',
+                    'student_name' => $studentName,
+                    'parent_name' => $parentName,
+                    'mobile' => $finalMobile,
+                    'alternate_mobile' => $altMobile,
+                    'email' => $email,
+                    'class_applied' => $classApplied,
+                    'enquiry_date' => $enquiryDate,
+                    'enquiry_source' => $enquirySource,
                     'assigned_to' => $assignedId,
-                    'status' => $mapped['status'] ?: 'New',
-                    'priority' => in_array($mapped['priority'] ?? '', ['Low', 'Medium', 'High', 'Urgent']) ? $mapped['priority'] : 'Medium',
-                    'address' => $mapped['address'] ?? null,
-                    'city' => $mapped['city'] ?? 'Purnea',
-                    'remarks' => $mapped['remarks'] ?? null,
+                    'status' => 'New',
+                    'priority' => $priority,
+                    'address' => $address,
+                    'city' => $city,
+                    'remarks' => $remarks,
                 ]);
 
                 $imported++;
@@ -299,6 +429,19 @@ class CsvImportService
 
             $db->commit();
             fclose($handle);
+
+            // Send notification to each counselor who received leads
+            $assignerName = Auth::user()['name'] ?? 'Admin';
+            foreach ($counselorCounts as $cId => $cnt) {
+                Notification::create([
+                    'user_id' => $cId,
+                    'sender_id' => Auth::id() ?: 1,
+                    'type' => 'lead_assigned',
+                    'title' => "{$cnt} New Leads Assigned",
+                    'message' => "{$assignerName} imported {$cnt} new admission leads and distributed them to you from file '{$fileName}'.",
+                    'link' => 'leads'
+                ]);
+            }
 
             ImportBatch::complete($batchId, $imported, $skipped, $failed, "Import finished: {$imported} imported, {$skipped} skipped, {$failed} failed.");
 
@@ -308,6 +451,7 @@ class CsvImportService
                 'imported' => $imported,
                 'skipped' => $skipped,
                 'failed' => $failed,
+                'distributed' => $counselorCounts,
             ];
         } catch (\Throwable $e) {
             $db->rollBack();

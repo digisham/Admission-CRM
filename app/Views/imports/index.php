@@ -41,18 +41,18 @@ $pageTitle = 'Excel / CSV Leads Import Wizard';
                     </div>
 
                     <div class="mb-4">
-                        <label class="form-label small fw-semibold text-muted">Select CSV File (.csv) *</label>
-                        <input type="file" name="csv_file" class="form-control" required accept=".csv">
-                        <div class="form-text" style="font-size: 0.72rem;">Max file size: 10MB. UTF-8 encoded CSV.</div>
+                        <label class="form-label small fw-semibold text-muted">Select CSV or Excel Spreadsheet (.csv, .xlsx) *</label>
+                        <input type="file" name="csv_file" class="form-control" required accept=".csv, .xlsx, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel, text/csv">
+                        <div class="form-text" style="font-size: 0.72rem;">Supported formats: <strong>.csv</strong> and Microsoft Excel <strong>.xlsx</strong>. Max size: 10MB.</div>
                     </div>
 
                     <div class="p-3 bg-light rounded border mb-4 small text-muted">
                         <div class="fw-semibold text-dark mb-1">Import Guidelines:</div>
                         <ul class="mb-0 ps-3">
-                            <li>Required columns: <strong>Student Name</strong> and <strong>Mobile Number</strong> (10 digits).</li>
-                            <li>Phone numbers are preserved with leading zeros.</li>
-                            <li>Existing phone numbers in the active session will be flagged as duplicates.</li>
-                            <li>You will preview rows and map columns before any data is committed.</li>
+                            <li>Primary required column: <strong>Student Name</strong>.</li>
+                            <li><strong>Mobile Number:</strong> Optional / recommended. If empty, the system automatically assigns safe defaults (<strong>N/A</strong>) so your records import without error.</li>
+                            <li>Empty optional columns (Parent Name, Class, Priority, City) auto-fill with standard defaults.</li>
+                            <li>All newly imported records will show status <strong class="text-primary">New</strong>.</li>
                         </ul>
                     </div>
 

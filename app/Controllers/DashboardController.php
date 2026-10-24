@@ -4,6 +4,7 @@ namespace App\Controllers;
 use App\Helpers\Auth;
 use App\Helpers\View;
 use App\Models\AcademicSession;
+use App\Models\FollowupLog;
 use App\Models\Lead;
 use App\Models\Task;
 use App\Models\User;
@@ -25,17 +26,23 @@ class DashboardController
             $userId = Auth::id();
             $metrics = Lead::getDashboardMetrics($selectedSessionId, $userId);
 
-            // Fetch today's tasks & followups for this counselor
+            // Fetch tasks for this counselor (assigned, created, or on their leads)
             $todayTasks = Task::all([
-                'assigned_to' => $userId,
                 'session_id' => $selectedSessionId,
-                'due_filter' => 'today'
+                'due_filter' => 'today',
+                'limit' => 10
             ]);
 
             $overdueTasks = Task::all([
-                'assigned_to' => $userId,
                 'session_id' => $selectedSessionId,
-                'due_filter' => 'overdue'
+                'due_filter' => 'overdue',
+                'limit' => 10
+            ]);
+
+            $upcomingTasks = Task::all([
+                'session_id' => $selectedSessionId,
+                'due_filter' => 'upcoming',
+                'limit' => 10
             ]);
 
             // Recent leads assigned to this counselor
@@ -45,6 +52,7 @@ class DashboardController
                 'metrics' => $metrics,
                 'todayTasks' => $todayTasks,
                 'overdueTasks' => $overdueTasks,
+                'upcomingTasks' => $upcomingTasks,
                 'recentLeads' => $recentLeads,
                 'selectedSessionId' => $selectedSessionId,
             ]);
@@ -56,16 +64,24 @@ class DashboardController
             // Recent leads
             $recentLeads = Lead::paginate(['session_id' => $selectedSessionId], 1, 6)['data'];
 
+            // Recent activity call logs
+            $recentActivities = FollowupLog::all([
+                'session_id' => $selectedSessionId,
+                'limit' => 6
+            ]);
+
             // Overdue tasks
             $overdueTasks = Task::all([
                 'session_id' => $selectedSessionId,
-                'due_filter' => 'overdue'
+                'due_filter' => 'overdue',
+                'limit' => 5
             ]);
 
             View::render('dashboard/admin', [
                 'metrics' => $metrics,
                 'workload' => $workload,
                 'recentLeads' => $recentLeads,
+                'recentActivities' => $recentActivities,
                 'overdueTasks' => $overdueTasks,
                 'selectedSessionId' => $selectedSessionId,
             ]);

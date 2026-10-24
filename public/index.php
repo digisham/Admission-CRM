@@ -9,19 +9,64 @@
 error_reporting(E_ALL);
 ini_set('display_errors', '1');
 
+// Send fresh cache-control and comprehensive security headers
+if (!headers_sent()) {
+    header('Cache-Control: no-cache, no-store, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+
+    // HTTP Security Hardening Headers
+    header('X-Content-Type-Options: nosniff');
+    header('X-Frame-Options: SAMEORIGIN');
+    header('X-XSS-Protection: 1; mode=block');
+    header('Referrer-Policy: strict-origin-when-cross-origin');
+    header('Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()');
+
+    if (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') {
+        header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+    }
+
+    // Content-Security-Policy tailored for Bootstrap, Google Fonts, Lucide, Chart.js & CDNs
+    $csp = "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https://cdn.jsdelivr.net https://unpkg.com https://fonts.googleapis.com https://fonts.gstatic.com https://cdn-icons-png.flaticon.com; "
+         . "connect-src 'self' https://unpkg.com https://cdn.jsdelivr.net; "
+         . "img-src 'self' data: blob: https:; "
+         . "frame-ancestors 'self';";
+    header("Content-Security-Policy: {$csp}");
+}
+
 // Autoload application classes
 require_once dirname(__DIR__) . '/app/autoload.php';
 
 use App\Config\App;
 use App\Helpers\Auth;
+use App\Helpers\Network;
 use App\Helpers\View;
 
 App::init();
+Network::enforceSchoolIpRedirect();
 Auth::startSession();
 
 // Determine requested route
 $route = $_GET['route'] ?? '';
 $route = trim($route, '/');
+
+// Safeguard against malformed query strings inside route (e.g., "leads?session_id=1&page=2")
+if (strpos($route, '?') !== false) {
+    [$cleanRoute, $extraQs] = explode('?', $route, 2);
+    $route = trim($cleanRoute, '/');
+    parse_str($extraQs, $extraGet);
+    $_GET = array_merge($_GET, $extraGet);
+    $_REQUEST = array_merge($_REQUEST, $extraGet);
+}
+
+// Support clean URLs like /enquire, /inquire, /admission from REQUEST_URI
+if (empty($route)) {
+    $requestUriPath = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
+    $cleanPath = trim((string)$requestUriPath, '/');
+    if (preg_match('/(enquire|inquire|admission|admission-enquiry|public-enquiry)$/i', $cleanPath)) {
+        $route = 'inquire';
+    }
+}
 
 // Default route
 if (empty($route)) {
@@ -45,6 +90,41 @@ try {
         case 'forgot-password':
             $controller = new \App\Controllers\AuthController();
             $method === 'POST' ? $controller->forgotPassword() : $controller->showForgotPassword();
+            break;
+
+        case 'auth/check-email':
+            (new \App\Controllers\AuthController())->checkEmail();
+            break;
+
+        // --- PUBLIC ADMISSION ENQUIRY ---
+        case 'inquire':
+        case 'enquiry':
+        case 'public-enquiry':
+            $controller = new \App\Controllers\InquiryController();
+            $method === 'POST' ? $controller->store() : $controller->index();
+            break;
+
+        case 'inquire/store':
+        case 'enquiry/store':
+            (new \App\Controllers\InquiryController())->store();
+            break;
+
+        case 'inquire/captcha-refresh':
+        case 'enquiry/captcha-refresh':
+            (new \App\Controllers\InquiryController())->refreshCaptcha();
+            break;
+
+        // --- USER PROFILE ---
+        case 'profile':
+            (new \App\Controllers\ProfileController())->index();
+            break;
+
+        case 'profile/update':
+            (new \App\Controllers\ProfileController())->update();
+            break;
+
+        case 'profile/change-password':
+            (new \App\Controllers\ProfileController())->changePassword();
             break;
 
         // --- DASHBOARD ---
@@ -85,6 +165,14 @@ try {
             (new \App\Controllers\LeadController())->update();
             break;
 
+        case 'leads/delete':
+            (new \App\Controllers\LeadController())->delete();
+            break;
+
+        case 'leads/bulk-delete':
+            (new \App\Controllers\LeadController())->bulkDelete();
+            break;
+
         case 'leads/assign':
             (new \App\Controllers\LeadController())->assign();
             break;
@@ -95,6 +183,14 @@ try {
 
         case 'leads/check-duplicate':
             (new \App\Controllers\LeadController())->checkDuplicate();
+            break;
+
+        case 'leads/quick-update':
+            (new \App\Controllers\LeadController())->quickUpdate();
+            break;
+
+        case 'leads/quick-details':
+            (new \App\Controllers\LeadController())->quickDetails();
             break;
 
         // --- TASKS ---
@@ -134,6 +230,14 @@ try {
 
         case 'documents/download':
             (new \App\Controllers\DocumentController())->download();
+            break;
+
+        case 'documents/download-all':
+            (new \App\Controllers\DocumentController())->downloadAll();
+            break;
+
+        case 'documents/delete':
+            (new \App\Controllers\DocumentController())->delete();
             break;
 
         // --- SESSIONS ---
@@ -207,6 +311,18 @@ try {
             (new \App\Controllers\ImportController())->history();
             break;
 
+        case 'import/delete-error':
+            (new \App\Controllers\ImportController())->deleteError();
+            break;
+
+        case 'import/delete-errors':
+            (new \App\Controllers\ImportController())->deleteErrors();
+            break;
+
+        case 'import/clear-errors':
+            (new \App\Controllers\ImportController())->clearErrors();
+            break;
+
         case 'import/template':
             (new \App\Controllers\ImportController())->template();
             break;
@@ -214,6 +330,19 @@ try {
         // --- EXPORTS ---
         case 'export/leads':
             (new \App\Controllers\ExportController())->exportLeads();
+            break;
+
+        // --- NOTIFICATIONS ---
+        case 'notifications/unread':
+            (new \App\Controllers\NotificationController())->unread();
+            break;
+
+        case 'notifications/read':
+            (new \App\Controllers\NotificationController())->read();
+            break;
+
+        case 'notifications/mark-all-read':
+            (new \App\Controllers\NotificationController())->markAllRead();
             break;
 
         // 404 Not Found

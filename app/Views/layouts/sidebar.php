@@ -9,12 +9,13 @@ $currentRoute = $_GET['route'] ?? 'dashboard';
     <!-- Brand Header -->
     <div class="sidebar-header d-flex align-items-center justify-content-between">
         <a href="<?= View::url('dashboard') ?>" class="brand-logo-container">
-            <div class="brand-icon-box">
-                <i data-lucide="sparkles" style="width: 20px; height: 20px;"></i>
+            <div class="brand-icon-box" style="flex:0 0 auto">
+                <img class="img-fluid" src="<?= View::asset('images/favicon.png') ?>" alt="">
             </div>
             <div>
-                <div class="fw-bold text-dark lh-1" style="font-size: 0.98rem; letter-spacing: -0.01em;">GD GOENKA</div>
-                <div class="text-muted fw-semibold" style="font-size: 0.68rem; letter-spacing: 0.05em;">PURNEA &bull; ADMISSION CRM</div>
+                <img class="img-fluid" src="<?= View::asset('images/dashboard-logo.png') ?>" alt="">
+                <!-- <div class="fw-bold text-dark lh-1" style="font-size: 0.98rem; letter-spacing: -0.01em;">GD GOENKA</div>
+                <div class="text-muted fw-semibold" style="font-size: 0.68rem; letter-spacing: 0.05em;">PURNEA &bull; ADMISSION CRM</div> -->
             </div>
         </a>
         <button class="btn btn-sm btn-light border-0 d-lg-none" id="sidebarCloseBtn">
@@ -34,21 +35,34 @@ $currentRoute = $_GET['route'] ?? 'dashboard';
                     </div>
                 </a>
             </li>
+            
+            <?php if (Auth::isAdmin()): ?>
+            <li class="nav-item">
+                <a class="position-relative nav-link <?= $currentRoute === 'leads/unassigned' ? 'active' : '' ?>" href="<?= View::url('leads/unassigned') ?>">
+                    <div class="nav-left">
+                        <i data-lucide="user-x" class="nav-icon"></i>
+                        <span>Unassigned Leads</span>
+                    </div>
+                    <span class="sidebar-badge <?= $currentRoute === 'leads/unassigned' ? 'bg-white text-navy' : 'bg-warning-subtle text-dark' ?>" style="position:absolute;right: 7px;padding: 0 5px;font-size: 10px;top: 14px;">Queue</span>
+                </a>
+            </li>
+            <?php endif; ?>
+
             <li class="nav-item">
                 <a class="nav-link <?= str_starts_with($currentRoute, 'leads') && $currentRoute !== 'leads/unassigned' ? 'active' : '' ?>" href="<?= View::url('leads') ?>">
                     <div class="nav-left">
                         <i data-lucide="users" class="nav-icon"></i>
-                        <span>All Enquiries</span>
+                        <span>All Leads</span>
                     </div>
                 </a>
             </li>
             <li class="nav-item">
-                <a class="nav-link <?= $currentRoute === 'leads/unassigned' ? 'active' : '' ?>" href="<?= View::url('leads/unassigned') ?>">
+                <a class="position-relative nav-link" href="<?= View::url('inquire') ?>" target="_blank" title="Open Public Admission Enquiry Form">
                     <div class="nav-left">
-                        <i data-lucide="user-x" class="nav-icon"></i>
-                        <span>Unassigned</span>
+                        <i data-lucide="external-link" class="nav-icon text-primary"></i>
+                        <span>Public Enquiry Form</span>
                     </div>
-                    <span class="sidebar-badge <?= $currentRoute === 'leads/unassigned' ? 'bg-white text-navy' : 'bg-warning-subtle text-dark' ?>">Queue</span>
+                    <span class="sidebar-badge bg-primary-subtle text-primary fw-bold" style="position:absolute;right: 7px;padding: 0 5px;font-size: 10px;top: 14px;">Web</span>
                 </a>
             </li>
             <li class="nav-item">
@@ -63,7 +77,7 @@ $currentRoute = $_GET['route'] ?? 'dashboard';
                 <a class="nav-link <?= $currentRoute === 'followups' ? 'active' : '' ?>" href="<?= View::url('followups') ?>">
                     <div class="nav-left">
                         <i data-lucide="phone-call" class="nav-icon"></i>
-                        <span>Call Logs</span>
+                        <span>Follow Up Logs</span>
                     </div>
                 </a>
             </li>
@@ -75,32 +89,12 @@ $currentRoute = $_GET['route'] ?? 'dashboard';
                     </div>
                 </a>
             </li>
+            <?php if (Auth::isAdmin()): ?>
             <li class="nav-item">
                 <a class="nav-link <?= $currentRoute === 'reports' ? 'active' : '' ?>" href="<?= View::url('reports') ?>">
                     <div class="nav-left">
                         <i data-lucide="bar-chart-2" class="nav-icon"></i>
                         <span>Analytics</span>
-                    </div>
-                </a>
-            </li>
-        </ul>
-
-        <?php if (Auth::isAdmin()): ?>
-        <div class="sidebar-label mt-2">Administration</div>
-        <ul class="nav flex-column mb-2">
-            <li class="nav-item">
-                <a class="nav-link <?= $currentRoute === 'sessions' ? 'active' : '' ?>" href="<?= View::url('sessions') ?>">
-                    <div class="nav-left">
-                        <i data-lucide="calendar" class="nav-icon"></i>
-                        <span>Sessions (2027–28)</span>
-                    </div>
-                </a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link <?= $currentRoute === 'users' ? 'active' : '' ?>" href="<?= View::url('users') ?>">
-                    <div class="nav-left">
-                        <i data-lucide="user-check" class="nav-icon"></i>
-                        <span>Staff & Counselors</span>
                     </div>
                 </a>
             </li>
@@ -112,24 +106,44 @@ $currentRoute = $_GET['route'] ?? 'dashboard';
                     </div>
                 </a>
             </li>
+            <?php endif; ?>
+        </ul>
+
+        <?php if (Auth::isSuperAdmin()): ?>
+        <div class="sidebar-label mt-2">Administration</div>
+        <ul class="nav flex-column mb-2">
+            <li class="nav-item">
+                <a class="nav-link <?= $currentRoute === 'sessions' ? 'active' : '' ?>" href="<?= View::url('sessions') ?>">
+                    <div class="nav-left">
+                        <i data-lucide="calendar" class="nav-icon"></i>
+                        <span>Academic Sessions</span>
+                    </div>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link <?= $currentRoute === 'users' ? 'active' : '' ?>" href="<?= View::url('users') ?>">
+                    <div class="nav-left">
+                        <i data-lucide="user-check" class="nav-icon"></i>
+                        <span>Staff & Admission Counselors</span>
+                    </div>
+                </a>
+            </li>
             <li class="nav-item">
                 <a class="nav-link <?= $currentRoute === 'settings' ? 'active' : '' ?>" href="<?= View::url('settings') ?>">
                     <div class="nav-left">
                         <i data-lucide="settings" class="nav-icon"></i>
-                        <span>Settings</span>
+                        <span>Setting</span>
                     </div>
                 </a>
             </li>
-            <?php if (Auth::isSuperAdmin()): ?>
             <li class="nav-item">
                 <a class="nav-link <?= $currentRoute === 'audit' ? 'active' : '' ?>" href="<?= View::url('audit') ?>">
                     <div class="nav-left">
                         <i data-lucide="shield-check" class="nav-icon"></i>
-                        <span>Audit Log</span>
+                        <span>Audit Trail & Security Logs</span>
                     </div>
                 </a>
             </li>
-            <?php endif; ?>
         </ul>
         <?php endif; ?>
     </div>

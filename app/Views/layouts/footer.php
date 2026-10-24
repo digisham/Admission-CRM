@@ -26,6 +26,17 @@
     }
 </script>
 
+<!-- jQuery (for Summernote) -->
+<script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+<script>
+    if (typeof window.jQuery === 'undefined') {
+        document.write('<script src="https://code.jquery.com/jquery-3.7.1.min.js"><\/script>');
+    }
+</script>
+
+<!-- Summernote Lite JS for Rich Text Editor -->
+<script src="https://cdn.jsdelivr.net/npm/summernote@0.8.20/dist/summernote-lite.min.js"></script>
+
 <!-- Custom App Scripts -->
 <script src="<?= \App\Helpers\View::asset('js/app.js') ?>"></script>
 </body>

@@ -50,8 +50,9 @@ class ImportBatch
     public static function create(string $fileName, ?string $fileHash, int $totalRows): int
     {
         $db = Database::getConnection();
+        $importedBy = Auth::id() ?: 1;
         $stmt = $db->prepare("INSERT INTO import_batches (file_name, file_hash, imported_by, total_rows, status) VALUES (?, ?, ?, ?, 'Processing')");
-        $stmt->execute([$fileName, $fileHash, Auth::id(), $totalRows]);
+        $stmt->execute([$fileName, $fileHash, $importedBy, $totalRows]);
         return (int)$db->lastInsertId();
     }
 
@@ -75,5 +76,57 @@ class ImportBatch
             'skipped' => $skipped,
             'failed' => $failed
         ]);
+    }
+
+    public static function deleteError(int $id, int $batchId = 0): bool
+    {
+        $db = Database::getConnection();
+        $stmt = $db->prepare("DELETE FROM import_row_errors WHERE id = ?");
+        $res = $stmt->execute([$id]);
+        if ($batchId > 0) {
+            self::updateErrorCount($batchId);
+        }
+        return $res;
+    }
+
+    public static function deleteErrors(array $ids, int $batchId = 0): int
+    {
+        $cleanIds = array_filter(array_map('intval', $ids));
+        if (empty($cleanIds)) {
+            return 0;
+        }
+
+        $db = Database::getConnection();
+        $placeholders = implode(',', array_fill(0, count($cleanIds), '?'));
+        $stmt = $db->prepare("DELETE FROM import_row_errors WHERE id IN ({$placeholders})");
+        $stmt->execute(array_values($cleanIds));
+        $count = $stmt->rowCount();
+
+        if ($batchId > 0) {
+            self::updateErrorCount($batchId);
+        }
+        return $count;
+    }
+
+    public static function clearAllErrors(int $batchId): int
+    {
+        $db = Database::getConnection();
+        $stmt = $db->prepare("DELETE FROM import_row_errors WHERE batch_id = ?");
+        $stmt->execute([$batchId]);
+        $count = $stmt->rowCount();
+
+        self::updateErrorCount($batchId);
+        return $count;
+    }
+
+    public static function updateErrorCount(int $batchId): void
+    {
+        $db = Database::getConnection();
+        $stmt = $db->prepare("SELECT COUNT(*) FROM import_row_errors WHERE batch_id = ?");
+        $stmt->execute([$batchId]);
+        $remaining = (int)$stmt->fetchColumn();
+
+        $update = $db->prepare("UPDATE import_batches SET failed_rows = ? WHERE id = ?");
+        $update->execute([$remaining, $batchId]);
     }
 }

@@ -11,6 +11,7 @@ $avatarColorClasses = ['avatar-purple', 'avatar-orange', 'avatar-blue', 'avatar-
 
 <!-- 1. VIBRANT HERO BANNER -->
 <div class="hero-dashboard-banner">
+    <div class="imgbg"><img src="<?= View::asset('img/bg.png') ?>" alt=""></div>
     <!-- Top Row: Avatar + Date Pill, Search Pill, Clock Pill -->
     <div class="hero-top-bar">
         <div class="d-flex align-items-center gap-2">
@@ -25,7 +26,7 @@ $avatarColorClasses = ['avatar-purple', 'avatar-orange', 'avatar-blue', 'avatar-
         </div>
 
         <!-- Search Bar -->
-        <div class="hero-search-wrapper position-relative">
+        <!-- <div class="hero-search-wrapper position-relative">
             <form action="<?= View::url('leads') ?>" method="GET" class="m-0">
                 <input type="hidden" name="route" value="leads">
                 <i data-lucide="search" class="hero-search-icon"></i>
@@ -41,28 +42,32 @@ $avatarColorClasses = ['avatar-purple', 'avatar-orange', 'avatar-blue', 'avatar-
             <a href="<?= View::url('leads/create') ?>" class="hero-pill" title="Add Walk-in Enquiry">
                 <i data-lucide="plus" style="width: 16px; height: 16px;"></i>
             </a>
-        </div>
+        </div> -->
     </div>
 
     <!-- Greeting Headline -->
     <div class="hero-greeting-title">
-        Welcome, <?= Sanitizer::e($firstName) ?>. Today's an admission day.
+        Welcome,<span class="text-warning"> <?= Sanitizer::e($firstName) ?>.</span>Today's an admission day.
     </div>
     <div class="hero-greeting-subtitle">
-        You have <strong><?= $metrics['followups_due_today'] ?> follow-up calls</strong> and <strong><?= count($todayTasks) ?> tasks</strong> scheduled for today.
+        You have  <strong><?= $metrics['followups_due_today'] ?> follow-up calls</strong> and <strong><?= count($todayTasks) ?> tasks</strong> scheduled for today.
     </div>
 
     <!-- Quick Remind Box -->
-    <div class="hero-remind-box">
+    <!-- <div class="hero-remind-box">
         <i data-lucide="bell" style="width: 15px; height: 15px; color: #FBBF24;"></i>
         <span>
             <?php if (!empty($todayTasks)): ?>
-                <strong>Scheduled:</strong> <?= Sanitizer::e($todayTasks[0]['title']) ?> with <strong><?= Sanitizer::e($todayTasks[0]['student_name']) ?></strong>
+                <strong>Today's Task:</strong> <?= Sanitizer::e($todayTasks[0]['title']) ?> with <strong><?= Sanitizer::e($todayTasks[0]['student_name']) ?></strong>
+            <?php elseif (!empty($upcomingTasks)): ?>
+                <strong>Upcoming Task:</strong> <?= Sanitizer::e($upcomingTasks[0]['title']) ?> with <strong><?= Sanitizer::e($upcomingTasks[0]['student_name']) ?></strong> (<?= date('d M', strtotime($upcomingTasks[0]['due_date'])) ?>)
+            <?php elseif (!empty($overdueTasks)): ?>
+                <strong class="text-danger">Overdue Task:</strong> <?= Sanitizer::e($overdueTasks[0]['title']) ?> with <strong><?= Sanitizer::e($overdueTasks[0]['student_name']) ?></strong>
             <?php else: ?>
-                <strong>Great job:</strong> All scheduled tasks for today are up to date.
+                <strong>Great job:</strong> All scheduled tasks are up to date.
             <?php endif; ?>
         </span>
-    </div>
+    </div> -->
 
     <!-- Action Buttons Row -->
     <div class="hero-action-row">
@@ -163,30 +168,38 @@ $avatarColorClasses = ['avatar-purple', 'avatar-orange', 'avatar-blue', 'avatar-
 </div>
 
 <!-- 3. BENTO CARDS ROW -->
+<?php
+$displayTasks = !empty($todayTasks) ? $todayTasks : (!empty($upcomingTasks) ? $upcomingTasks : $overdueTasks);
+?>
 <div class="row g-3">
-    <!-- Today's Tasks -->
+    <!-- Action Items & Tasks -->
     <div class="col-lg-6">
         <div class="bento-card">
             <div class="bento-card-header">
                 <h6 class="bento-card-title">
                     <i data-lucide="clock" class="text-primary" style="width: 18px; height: 18px;"></i>
-                    Today's Action Items
+                    <?= !empty($todayTasks) ? "Today's Action Items" : (!empty($upcomingTasks) ? "Upcoming Action Items" : "My Action Items") ?>
                 </h6>
                 <a href="<?= View::url('tasks') ?>" class="bento-card-link">All Tasks &gt;</a>
             </div>
             <div class="bento-list">
-                <?php if (empty($todayTasks)): ?>
-                    <div class="text-center text-muted py-5 small">No pending tasks for today. You're all caught up!</div>
+                <?php if (empty($displayTasks)): ?>
+                    <div class="text-center text-muted py-5 small">No pending tasks. You're all caught up!</div>
                 <?php else: ?>
-                    <?php foreach ($todayTasks as $tt): ?>
+                    <?php foreach ($displayTasks as $tt): ?>
                     <div class="bento-item">
                         <div class="d-flex align-items-center gap-2 text-truncate me-2">
-                            <div class="bento-avatar avatar-blue">
-                                <i data-lucide="phone-call" style="width: 16px; height: 16px;"></i>
+                            <div class="bento-avatar <?= !empty($tt['is_overdue']) ? 'avatar-red' : 'avatar-blue' ?>">
+                                <i data-lucide="<?= ($tt['task_type'] ?? '') === 'WhatsApp Follow-up' ? 'message-circle' : 'phone-call' ?>" style="width: 16px; height: 16px;"></i>
                             </div>
                             <div class="text-truncate">
                                 <div class="fw-bold text-dark small text-truncate"><?= Sanitizer::e($tt['title']) ?></div>
-                                <div class="text-muted" style="font-size: 0.72rem;">Student: <strong><?= Sanitizer::e($tt['student_name']) ?></strong> &bull; <?= Sanitizer::e($tt['mobile']) ?></div>
+                                <div class="text-muted" style="font-size: 0.72rem;">
+                                    Student: <strong><?= Sanitizer::e($tt['student_name']) ?></strong> &bull; Due: <?= date('d M, h:i A', strtotime($tt['due_date'])) ?>
+                                    <?php if (!empty($tt['assignee_name']) && $tt['assigned_to'] != Auth::id()): ?>
+                                        <span class="badge bg-light text-dark border ms-1">Assigned: <?= Sanitizer::e($tt['assignee_name']) ?></span>
+                                    <?php endif; ?>
+                                </div>
                             </div>
                         </div>
                         <a href="<?= View::url('leads/show&id=' . $tt['lead_id']) ?>" class="btn btn-sm btn-navy btn-pill py-1 px-3" style="font-size: 0.75rem;">

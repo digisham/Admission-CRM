@@ -12,7 +12,7 @@ class UserController
 {
     public function index(): void
     {
-        if (!Auth::isAdmin()) {
+        if (!Auth::isSuperAdmin()) {
             View::flash('error', 'Only administrators can manage users & staff.');
             View::redirect(View::url('dashboard'));
         }
@@ -21,10 +21,17 @@ class UserController
         $db = Database::getConnection();
         $roles = $db->query("SELECT * FROM roles ORDER BY id ASC")->fetchAll();
 
-        // Calculate active records for each user
+        // Calculate active records for each user in 2 fast bulk queries
+        $leadsMap = $db->query("SELECT assigned_to, COUNT(*) as cnt FROM leads WHERE is_archived = 0 AND status NOT IN ('Admission Confirmed', 'Lost / Unreachable') AND assigned_to IS NOT NULL GROUP BY assigned_to")->fetchAll(\PDO::FETCH_KEY_PAIR);
+        $tasksMap = $db->query("SELECT t.assigned_to, COUNT(*) as cnt FROM tasks t JOIN leads l ON t.lead_id = l.id WHERE l.is_archived = 0 AND t.status IN ('Pending', 'In Progress') GROUP BY t.assigned_to")->fetchAll(\PDO::FETCH_KEY_PAIR);
+
         $userStats = [];
         foreach ($users as $u) {
-            $userStats[$u['id']] = User::getActiveRecordCounts((int)$u['id']);
+            $uid = (int)$u['id'];
+            $userStats[$uid] = [
+                'active_leads' => (int)($leadsMap[$uid] ?? 0),
+                'pending_tasks' => (int)($tasksMap[$uid] ?? 0),
+            ];
         }
 
         View::render('users/index', [
@@ -36,7 +43,7 @@ class UserController
 
     public function store(): void
     {
-        if (!Auth::isAdmin()) {
+        if (!Auth::isSuperAdmin()) {
             View::flash('error', 'Unauthorized.');
             View::redirect(View::url('users'));
         }
@@ -78,7 +85,7 @@ class UserController
 
     public function update(): void
     {
-        if (!Auth::isAdmin()) {
+        if (!Auth::isSuperAdmin()) {
             View::flash('error', 'Unauthorized.');
             View::redirect(View::url('users'));
         }
@@ -120,7 +127,7 @@ class UserController
 
     public function toggleStatus(): void
     {
-        if (!Auth::isAdmin()) {
+        if (!Auth::isSuperAdmin()) {
             View::flash('error', 'Unauthorized.');
             View::redirect(View::url('users'));
         }

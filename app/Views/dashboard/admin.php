@@ -14,6 +14,7 @@ $avatarColorClasses = ['avatar-purple', 'avatar-orange', 'avatar-blue', 'avatar-
 
 <!-- 1. VIBRANT ROYAL BLUE HERO BANNER (MATCHING REFERENCE DESIGN) -->
 <div class="hero-dashboard-banner">
+     <div class="imgbg"><img src="<?= View::asset('img/bg.png') ?>" alt=""></div>
     <!-- Top Row Inside Hero Banner: Avatar + Date Pill, Search Pill, Clock Pill -->
     <div class="hero-top-bar">
         <div class="d-flex align-items-center gap-2">
@@ -28,15 +29,15 @@ $avatarColorClasses = ['avatar-purple', 'avatar-orange', 'avatar-blue', 'avatar-
         </div>
 
         <!-- Translucent Pill Search -->
-        <div class="hero-search-wrapper position-relative">
+        <!-- <div class="hero-search-wrapper position-relative">
             <form action="<?= View::url('leads') ?>" method="GET" class="m-0">
                 <input type="hidden" name="route" value="leads">
                 <i data-lucide="search" class="hero-search-icon"></i>
                 <input type="text" name="search" class="hero-search-input" placeholder="Search for Students, Parents, Contacts, or Enquiries...">
             </form>
-        </div>
+        </div> -->
 
-        <div class="d-flex align-items-center gap-2">
+        <!-- <div class="d-flex align-items-center gap-2">
             <div class="hero-pill">
                 <i data-lucide="clock" style="width: 14px; height: 14px;"></i>
                 <span><?= date('g:i a') ?></span>
@@ -44,19 +45,19 @@ $avatarColorClasses = ['avatar-purple', 'avatar-orange', 'avatar-blue', 'avatar-
             <a href="<?= View::url('leads/create') ?>" class="hero-pill" title="Add Enquiry">
                 <i data-lucide="plus" style="width: 16px; height: 16px;"></i>
             </a>
-        </div>
+        </div> -->
     </div>
 
     <!-- Greeting Headline -->
     <div class="hero-greeting-title">
-        Welcome, <?= Sanitizer::e($firstName) ?>. Today's an admission day.
+        Welcome, <span class="text-warning"> <?= Sanitizer::e($firstName) ?>.</span> Today's an admission day.
     </div>
     <div class="hero-greeting-subtitle">
         Your pipeline of student enquiries is waiting to be organized for session <strong>2027–28</strong>.
     </div>
 
     <!-- Quick Remind Box -->
-    <div class="hero-remind-box">
+    <!-- <div class="hero-remind-box">
         <i data-lucide="bell" style="width: 15px; height: 15px; color: #FBBF24;"></i>
         <span>
             <?php if (!empty($overdueTasks)): ?>
@@ -65,7 +66,7 @@ $avatarColorClasses = ['avatar-purple', 'avatar-orange', 'avatar-blue', 'avatar-
                 <strong>Quick remind:</strong> <?= $metrics['followups_due_today'] ?> parent follow-ups scheduled for today.
             <?php endif; ?>
         </span>
-    </div>
+    </div> -->
 
     <!-- Quick Action Circular Buttons (Directly from User Design) -->
     <div class="hero-action-row">
@@ -208,28 +209,53 @@ $avatarColorClasses = ['avatar-purple', 'avatar-orange', 'avatar-blue', 'avatar-
 <!-- 3. BENTO GRID SECTIONS (MATCHING REFERENCE LAYOUT) -->
 <div class="row g-3">
     <!-- COLUMN 1: RECENT ACTIVITY -->
-    <div class="col-lg-4">
+    <div class="<?= Auth::isAdmin() ? 'col-lg-4' : 'col-lg-6' ?>">
         <div class="bento-card">
             <div class="bento-card-header">
                 <h6 class="bento-card-title">
-                    <i data-lucide="activity" class="text-primary" style="width: 18px; height: 18px;"></i>
-                    Recent Activity
+                    <i data-lucide="phone-call" class="text-primary" style="width: 18px; height: 18px;"></i>
+                    Recent Call Activity
                 </h6>
-                <a href="<?= View::url('followups') ?>" class="bento-card-link">View All &gt;</a>
+                <a href="<?= View::url('followups') ?>" class="bento-card-link">All Logs &gt;</a>
             </div>
             <div class="bento-list">
-                <?php if (empty($recentLeads)): ?>
-                    <div class="text-center text-muted py-4 small">No recent activity.</div>
+                <?php if (empty($recentActivities) && empty($recentLeads)): ?>
+                    <div class="text-center text-muted py-4 small">No call activity recorded yet.</div>
+                <?php elseif (!empty($recentActivities)): ?>
+                    <?php foreach ($recentActivities as $idx => $act): 
+                        $avatarColor = $avatarColorClasses[$idx % count($avatarColorClasses)];
+                        $outcomeClass = match($act['outcome']) {
+                            'Admission Confirmed' => 'confirmed',
+                            'Interested', 'Visit Scheduled' => 'seeking',
+                            'Callback Requested' => 'open',
+                            'Not Interested', 'Lost / Unreachable' => 'lost',
+                            default => 'temp'
+                        };
+                    ?>
+                    <div class="bento-item">
+                        <div class="d-flex align-items-center gap-2 text-truncate me-2">
+                            <div class="bento-avatar <?= $avatarColor ?>">
+                                <?= strtoupper(substr($act['student_name'] ?? 'S', 0, 2)) ?>
+                            </div>
+                            <div class="text-truncate">
+                                <a href="<?= View::url('leads/show&id=' . $act['lead_id']) ?>" class="fw-bold text-dark text-decoration-none small text-truncate d-block">
+                                    <?= Sanitizer::e($act['student_name']) ?>
+                                </a>
+                                <div class="text-muted" style="font-size: 0.72rem;">
+                                    By <strong><?= Sanitizer::e($act['author_name']) ?></strong> &bull; <?= date('d M, h:i A', strtotime($act['created_at'])) ?>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="d-flex align-items-center gap-1">
+                            <span class="status-pill <?= $outcomeClass ?>">
+                                <?= Sanitizer::e($act['outcome']) ?>
+                            </span>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
                 <?php else: ?>
                     <?php foreach ($recentLeads as $idx => $rl): 
                         $avatarColor = $avatarColorClasses[$idx % count($avatarColorClasses)];
-                        $statusClass = match($rl['status']) {
-                            'Admission Confirmed' => 'confirmed',
-                            'Contacted' => 'seeking',
-                            'New' => 'open',
-                            'Lost / Unreachable' => 'lost',
-                            default => 'temp'
-                        };
                     ?>
                     <div class="bento-item">
                         <div class="d-flex align-items-center gap-2 text-truncate me-2">
@@ -244,18 +270,9 @@ $avatarColorClasses = ['avatar-purple', 'avatar-orange', 'avatar-blue', 'avatar-
                             </div>
                         </div>
                         <div class="d-flex align-items-center gap-1">
-                            <span class="status-pill <?= $statusClass ?>">
+                            <span class="status-pill open">
                                 <?= Sanitizer::e($rl['status']) ?>
                             </span>
-                            <div class="dropdown">
-                                <button class="action-dot-btn" type="button" data-bs-toggle="dropdown">
-                                    <i data-lucide="more-vertical" style="width: 15px; height: 15px;"></i>
-                                </button>
-                                <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 py-1" style="border-radius: 12px; font-size: 0.8rem;">
-                                    <li><a class="dropdown-item" href="<?= View::url('leads/show&id=' . $rl['id']) ?>">View Details</a></li>
-                                    <li><a class="dropdown-item" href="<?= View::url('leads/edit&id=' . $rl['id']) ?>">Edit Enquiry</a></li>
-                                </ul>
-                            </div>
                         </div>
                     </div>
                     <?php endforeach; ?>
@@ -265,7 +282,7 @@ $avatarColorClasses = ['avatar-purple', 'avatar-orange', 'avatar-blue', 'avatar-
     </div>
 
     <!-- COLUMN 2: ENQUIRIES / CANDIDATES -->
-    <div class="col-lg-4">
+    <div class="<?= Auth::isAdmin() ? 'col-lg-4' : 'col-lg-6' ?>">
         <div class="bento-card">
             <div class="bento-card-header">
                 <h6 class="bento-card-title">
@@ -313,7 +330,8 @@ $avatarColorClasses = ['avatar-purple', 'avatar-orange', 'avatar-blue', 'avatar-
         </div>
     </div>
 
-    <!-- COLUMN 3: COUNSELORS & WORKLOAD -->
+    <!-- COLUMN 3: COUNSELORS & WORKLOAD (Only for Super Admin & Admission Manager) -->
+    <?php if (Auth::isAdmin()): ?>
     <div class="col-lg-4">
         <div class="bento-card">
             <div class="bento-card-header">
@@ -321,7 +339,9 @@ $avatarColorClasses = ['avatar-purple', 'avatar-orange', 'avatar-blue', 'avatar-
                     <i data-lucide="user-check" class="text-primary" style="width: 18px; height: 18px;"></i>
                     Counselors & Staff
                 </h6>
+                <?php if (Auth::isSuperAdmin()): ?>
                 <a href="<?= View::url('users') ?>" class="bento-card-link">Manage &gt;</a>
+                <?php endif; ?>
             </div>
             <div class="bento-list">
                 <?php if (empty($workload)): ?>
@@ -360,4 +380,5 @@ $avatarColorClasses = ['avatar-purple', 'avatar-orange', 'avatar-blue', 'avatar-
             </div>
         </div>
     </div>
+    <?php endif; ?>
 </div>

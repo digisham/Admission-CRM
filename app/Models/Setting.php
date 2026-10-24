@@ -63,10 +63,19 @@ class Setting
 
     public static function getLeadSources(): array
     {
-        return self::get('lead_sources', [
+        $sources = self::get('lead_sources', [
             'Website', 'Phone Call', 'Walk-in', 'Referral', 'Social Media',
-            'Advertisement', 'School Event', 'Existing Parent', 'Other'
+            'Advertisement', 'School Event', 'Existing Parent', 'Admission Manager', 'Other'
         ]);
+        if (!in_array('Admission Manager', $sources)) {
+            $otherIndex = array_search('Other', $sources);
+            if ($otherIndex !== false) {
+                array_splice($sources, $otherIndex, 0, 'Admission Manager');
+            } else {
+                $sources[] = 'Admission Manager';
+            }
+        }
+        return $sources;
     }
 
     public static function getLeadStatuses(): array

@@ -1,0 +1,65 @@
+# ==============================================================================
+# GD Goenka Public School, Purnea - Admission CRM
+# Production Apache Configuration (.htaccess)
+# ==============================================================================
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Prevent directory browsing
+    Options -Indexes
+
+    # Block direct web access to sensitive directories and config files
+    RewriteRule ^(app|storage/logs|storage/private_uploads|storage/imports|database)/ - [F,L]
+    RewriteRule ^(\.env|\.git|\.agent|\.agents|composer\.json|composer\.lock|Live_Sync\.bat) - [F,L]
+
+    # Clean URLs for Public Admission Enquiry (Ads & Live Sharing)
+    RewriteRule ^(enquire|inquire|admission|admission-enquiry)/?$ public/index.php?route=inquire [L,QSA]
+    RewriteRule ^public/(enquire|inquire|admission|admission-enquiry)/?$ public/index.php?route=inquire [L,QSA]
+
+    # If assets are requested at root level, serve directly from public/assets if not found in root
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^assets/(.*)$ public/assets/$1 [L]
+
+    # Allow direct access to real existing files or directories
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # Route all other non-existing URLs to public/index.php front controller
+    RewriteRule ^(.*)$ public/index.php?route=$1 [L,QSA]
+</IfModule>
+
+# Block direct access to hidden files (.env, .git, etc.)
+<FilesMatch "^\.|\.(sql|env|log|bat|ps1)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Enable Gzip / Deflate compression for fast page loading
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/plain text/html text/xml text/css
+    AddOutputFilterByType DEFLATE application/xml application/xhtml+xml application/rss+xml
+    AddOutputFilterByType DEFLATE application/javascript application/x-javascript application/json
+    AddOutputFilterByType DEFLATE image/svg+xml
+</IfModule>
+
+# Intelligent Browser Caching
+<IfModule mod_headers.c>
+    # Static Assets: CSS, JS, Images, Fonts (cached for fast performance)
+    <FilesMatch "\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$">
+        Header set Cache-Control "public, max-age=86400, stale-while-revalidate=3600"
+    </FilesMatch>
+
+    # Dynamic PHP Pages: Never cache, always live fresh CRM data
+    <FilesMatch "\.php$">
+        Header set Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+        Header set Pragma "no-cache"
+        Header set Expires "0"
+    </FilesMatch>
+</IfModule>

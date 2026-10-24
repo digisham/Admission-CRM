@@ -12,7 +12,7 @@ class FollowupLog
     {
         $db = Database::getConnection();
 
-        $where = ["1=1"];
+        $where = ["l.is_archived = 0"];
         $params = [];
 
         if (Auth::isEmployee()) {
@@ -38,6 +38,16 @@ class FollowupLog
             $params[] = $filters['outcome'];
         }
 
+        if (!empty($filters['search'])) {
+            $where[] = "(l.student_name LIKE ? OR l.parent_name LIKE ? OR l.mobile LIKE ? OR l.lead_ref LIKE ? OR ful.remarks LIKE ?)";
+            $term = '%' . trim($filters['search']) . '%';
+            $params[] = $term;
+            $params[] = $term;
+            $params[] = $term;
+            $params[] = $term;
+            $params[] = $term;
+        }
+
         $whereClause = implode(" AND ", $where);
 
         $sql = "SELECT ful.*, l.lead_ref, l.student_name, l.parent_name, l.mobile, l.status as lead_status,
@@ -48,6 +58,10 @@ class FollowupLog
                 LEFT JOIN users assignee ON l.assigned_to = assignee.id
                 WHERE {$whereClause}
                 ORDER BY ful.created_at DESC";
+
+        if (!empty($filters['limit'])) {
+            $sql .= " LIMIT " . (int)$filters['limit'];
+        }
 
         $stmt = $db->prepare($sql);
         $stmt->execute($params);
@@ -82,6 +96,10 @@ class FollowupLog
         }
 
         if (!empty($data['lead_status'])) {
+            $lead = Lead::find((int)$data['lead_id']);
+            if ($lead && $lead['status'] !== $data['lead_status']) {
+                Lead::notifyStatusChange((int)$data['lead_id'], $lead, $data['lead_status']);
+            }
             $updateFields[] = "status = ?";
             $updateParams[] = $data['lead_status'];
         }

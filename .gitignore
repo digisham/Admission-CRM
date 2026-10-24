@@ -1,7 +1,8 @@
-# Environment
+# Environment & Secrets
 .env
+.env.backup
 
-# Storage
+# Storage & Uploads
 storage/logs/*
 storage/private_uploads/*
 storage/imports/*
@@ -12,7 +13,14 @@ storage/imports/*
 # Composer vendor
 vendor/
 
-# OS and IDE files
+# Archives & Temporary files
+*.zip
+*.tar.gz
+scratch/
+
+# OS, IDE and Agent files
 .DS_Store
 Thumbs.db
 *.log
+.agent/
+.agents/

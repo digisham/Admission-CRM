@@ -25,7 +25,12 @@ class FollowupController
             'session_id' => $_GET['session_id'] ?? $selectedSessionId,
             'assigned_to' => $_GET['assigned_to'] ?? null,
             'outcome' => $_GET['outcome'] ?? null,
+            'search' => $_GET['search'] ?? null,
         ];
+
+        if (Auth::isEmployee()) {
+            $filters['assigned_to'] = Auth::id();
+        }
 
         $logs = FollowupLog::all($filters);
         $counselors = User::getActiveCounselors();
@@ -39,7 +44,14 @@ class FollowupController
 
     public function store(): void
     {
+        $isAjax = (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest')
+               || (isset($_REQUEST['format']) && $_REQUEST['format'] === 'json')
+               || (isset($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false);
+
         if (!Csrf::validate($_POST['_csrf_token'] ?? null)) {
+            if ($isAjax) {
+                View::json(['status' => 'error', 'message' => 'Security token invalid. Please reload.'], 403);
+            }
             View::flash('error', 'Security token invalid.');
             View::redirect(View::url('followups'));
         }
@@ -49,12 +61,18 @@ class FollowupController
         $remarks = trim($_POST['remarks'] ?? '');
 
         if ($leadId <= 0 || empty($outcome) || empty($remarks)) {
+            if ($isAjax) {
+                View::json(['status' => 'error', 'message' => 'Lead ID, contact outcome, and discussion remarks are required.'], 422);
+            }
             View::flash('error', 'Lead ID, contact outcome, and discussion remarks are required.');
             View::redirect($_SERVER['HTTP_REFERER'] ?? View::url('leads'));
         }
 
         $lead = Lead::find($leadId);
         if (!$lead || !Auth::canAccessLead($lead)) {
+            if ($isAjax) {
+                View::json(['status' => 'error', 'message' => 'Unauthorized access to lead.'], 403);
+            }
             View::flash('error', 'Unauthorized access to lead.');
             View::redirect(View::url('leads'));
         }
@@ -67,6 +85,22 @@ class FollowupController
             'next_followup_date' => !empty($_POST['next_followup_date']) ? $_POST['next_followup_date'] : null,
             'lead_status' => !empty($_POST['lead_status']) ? $_POST['lead_status'] : null,
         ]);
+
+        if ($isAjax) {
+            View::json([
+                'status' => 'success',
+                'message' => 'Call log and follow-up entry saved successfully.',
+                'lead_id' => $leadId,
+                'outcome' => $outcome,
+                'contact_method' => $_POST['contact_method'] ?? 'Phone',
+                'remarks' => $remarks,
+                'next_followup_date' => !empty($_POST['next_followup_date']) ? $_POST['next_followup_date'] : null,
+                'lead_status' => !empty($_POST['lead_status']) ? $_POST['lead_status'] : $lead['status'],
+                'author' => Auth::user()['name'] ?? 'Staff',
+                'created_at' => date('Y-m-d H:i:s'),
+                'formatted_time' => 'Today ' . date('h:i A')
+            ]);
+        }
 
         View::flash('success', 'Call log and follow-up entry saved successfully.');
         $returnUrl = $_POST['return_url'] ?? View::url("leads/show&id={$leadId}");

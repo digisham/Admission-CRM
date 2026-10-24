@@ -22,12 +22,32 @@ class Lead
             $prefix = 'GDG-' . date('Y');
         }
 
-        // Get max id or count for this prefix
-        $stmt = $db->prepare("SELECT COUNT(*) FROM leads WHERE lead_ref LIKE ?");
+        // Get max existing sequence number for this prefix
+        $stmt = $db->prepare("SELECT lead_ref FROM leads WHERE lead_ref LIKE ?");
         $stmt->execute([$prefix . '-%']);
-        $count = (int)$stmt->fetchColumn() + 1;
+        $refs = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        $maxNum = 0;
+        foreach ($refs as $ref) {
+            $parts = explode('-', $ref);
+            $num = (int)end($parts);
+            if ($num > $maxNum) {
+                $maxNum = $num;
+            }
+        }
+        $nextNum = $maxNum + 1;
 
-        return sprintf('%s-%04d', $prefix, $count);
+        // Guarantee collision-free reference
+        $checkStmt = $db->prepare("SELECT id FROM leads WHERE lead_ref = ? LIMIT 1");
+        do {
+            $candidate = sprintf('%s-%04d', $prefix, $nextNum);
+            $checkStmt->execute([$candidate]);
+            $exists = $checkStmt->fetchColumn();
+            if ($exists) {
+                $nextNum++;
+            }
+        } while ($exists);
+
+        return $candidate;
     }
 
     public static function find(int $id): ?array
@@ -77,17 +97,18 @@ class Lead
         $where = ["l.is_archived = 0"];
         $params = [];
 
-        // Role restriction: Admission Counselor only sees their assigned leads
-        if (Auth::isEmployee()) {
-            $where[] = "l.assigned_to = ?";
-            $params[] = Auth::id();
-        } elseif (!empty($filters['assigned_to'])) {
-            $where[] = "l.assigned_to = ?";
-            $params[] = (int)$filters['assigned_to'];
-        }
-
-        if (!empty($filters['unassigned_only'])) {
-            $where[] = "l.assigned_to IS NULL";
+        // When filtering specifically for unassigned queue, allow viewing leads with assigned_to IS NULL or 0 (Super Admin / Admission Manager only)
+        if (!empty($filters['unassigned_only']) && Auth::isAdmin()) {
+            $where[] = "(l.assigned_to IS NULL OR l.assigned_to = 0)";
+        } else {
+            // Role restriction: Admission Counselor only sees their assigned leads in general views
+            if (Auth::isEmployee()) {
+                $where[] = "l.assigned_to = ?";
+                $params[] = Auth::id();
+            } elseif (!empty($filters['assigned_to'])) {
+                $where[] = "l.assigned_to = ?";
+                $params[] = (int)$filters['assigned_to'];
+            }
         }
 
         if (!empty($filters['session_id'])) {
@@ -96,18 +117,36 @@ class Lead
         }
 
         if (!empty($filters['status'])) {
-            $where[] = "l.status = ?";
-            $params[] = $filters['status'];
+            if (in_array($filters['status'], ['public_enquiry', 'Public Enquiry', 'Public Enquiries', 'Website / Online Enquiry'])) {
+                $where[] = "(l.enquiry_source = 'Website / Online Enquiry' OR l.enquiry_source LIKE '%Online Enquiry%' OR l.enquiry_source LIKE '%Public%')";
+            } else {
+                $where[] = "l.status = ?";
+                $params[] = $filters['status'];
+            }
         }
 
         if (!empty($filters['class_applied'])) {
-            $where[] = "l.class_applied = ?";
-            $params[] = $filters['class_applied'];
+            $classSynonyms = self::getClassSynonyms($filters['class_applied']);
+            if (count($classSynonyms) === 1) {
+                $where[] = "l.class_applied = ?";
+                $params[] = $classSynonyms[0];
+            } else {
+                $ph = implode(',', array_fill(0, count($classSynonyms), '?'));
+                $where[] = "l.class_applied IN ($ph)";
+                foreach ($classSynonyms as $cs) {
+                    $params[] = $cs;
+                }
+            }
         }
 
         if (!empty($filters['enquiry_source'])) {
-            $where[] = "l.enquiry_source = ?";
-            $params[] = $filters['enquiry_source'];
+            if ($filters['enquiry_source'] === 'Admission Manager') {
+                $where[] = "(l.enquiry_source = ? OR l.enquiry_source LIKE 'Admission Manager%')";
+                $params[] = $filters['enquiry_source'];
+            } else {
+                $where[] = "l.enquiry_source = ?";
+                $params[] = $filters['enquiry_source'];
+            }
         }
 
         if (!empty($filters['priority'])) {
@@ -153,9 +192,17 @@ class Lead
         $countStmt->execute($params);
         $totalRecords = (int)$countStmt->fetchColumn();
 
-        $totalPages = $perPage > 0 ? (int)ceil($totalRecords / $perPage) : 1;
-        $page = max(1, min($page, max(1, $totalPages)));
-        $offset = ($page - 1) * $perPage;
+        if ($perPage <= 0 || $perPage === -1) {
+            $totalPages = 1;
+            $page = 1;
+            $offset = 0;
+            $limitClause = "LIMIT 10000"; // Safety limit to protect server memory while showing all leads
+        } else {
+            $totalPages = (int)ceil($totalRecords / $perPage);
+            $page = max(1, min($page, max(1, $totalPages)));
+            $offset = ($page - 1) * $perPage;
+            $limitClause = "LIMIT {$perPage} OFFSET {$offset}";
+        }
 
         // Fetch records
         $sql = "SELECT l.*, s.session_label, u.name as assigned_name, u.email as assigned_email,
@@ -166,7 +213,7 @@ class Lead
                 LEFT JOIN users u ON l.assigned_to = u.id
                 WHERE {$whereClause}
                 ORDER BY l.created_at DESC
-                LIMIT {$perPage} OFFSET {$offset}";
+                {$limitClause}";
 
         $stmt = $db->prepare($sql);
         $stmt->execute($params);
@@ -215,10 +262,24 @@ class Lead
 
         $newId = (int)$db->lastInsertId();
 
-        // If assigned right away, record assignment history
+        // If assigned right away, record assignment history & send notification
         if (!empty($data['assigned_to'])) {
             $stmtHist = $db->prepare("INSERT INTO lead_assignment_history (lead_id, previous_user_id, new_user_id, assigned_by, reason) VALUES (?, NULL, ?, ?, ?)");
             $stmtHist->execute([$newId, (int)$data['assigned_to'], Auth::id(), 'Assigned upon lead creation']);
+
+            // Notify assigned employee if not self-assigned
+            if ((int)$data['assigned_to'] !== Auth::id()) {
+                $assignerName = Auth::user()['name'] ?? 'Admin';
+                Notification::create([
+                    'user_id' => (int)$data['assigned_to'],
+                    'sender_id' => Auth::id(),
+                    'lead_id' => $newId,
+                    'type' => 'lead_assigned',
+                    'title' => 'New Lead Assigned',
+                    'message' => "{$assignerName} assigned new lead {$data['student_name']} ({$leadRef}) to you.",
+                    'link' => 'index.php?route=leads/show&id=' . $newId
+                ]);
+            }
         }
 
         Logger::audit('lead_create', 'lead', $newId, null, ['ref' => $leadRef, 'student' => $data['student_name']]);
@@ -235,6 +296,8 @@ class Lead
 
         $cleanMobile = Sanitizer::cleanPhone($data['mobile'] ?? $old['mobile']);
         $cleanAltMobile = Sanitizer::cleanPhone($data['alternate_mobile'] ?? $old['alternate_mobile']);
+        $newStatus = $data['status'] ?? $old['status'];
+        $statusChanged = ($newStatus !== $old['status']);
 
         $stmt = $db->prepare("UPDATE leads SET 
                               student_name = ?, parent_name = ?, mobile = ?, alternate_mobile = ?, email = ?, 
@@ -249,7 +312,7 @@ class Lead
             !empty($data['email']) ? trim(strtolower($data['email'])) : null,
             $data['class_applied'] ?? $old['class_applied'],
             $data['enquiry_source'] ?? $old['enquiry_source'],
-            $data['status'] ?? $old['status'],
+            $newStatus,
             $data['priority'] ?? $old['priority'],
             !empty($data['next_followup_date']) ? $data['next_followup_date'] : null,
             $data['address'] ?? $old['address'],
@@ -261,8 +324,31 @@ class Lead
 
         if ($res) {
             Logger::audit('lead_update', 'lead', $id, $old, $data);
+
+            if ($statusChanged) {
+                self::notifyStatusChange($id, $old, $newStatus);
+            }
         }
         return $res;
+    }
+
+    public static function notifyStatusChange(int $leadId, array $lead, string $newStatus): void
+    {
+        $changer = Auth::user();
+        $changerName = $changer['name'] ?? 'Staff Member';
+        $changerId = Auth::id() ?: 1;
+        $studentName = $lead['student_name'] ?? 'Student';
+        $oldStatus = $lead['status'] ?? 'Unknown';
+
+        // Notify all staff (excluding the user who made the change)
+        Notification::notifyAllStaff([
+            'sender_id' => $changerId,
+            'lead_id' => $leadId,
+            'type' => 'status_changed',
+            'title' => "Status Updated: {$studentName}",
+            'message' => "{$changerName} changed {$studentName}'s status to \"{$newStatus}\" (was \"{$oldStatus}\").",
+            'link' => 'index.php?route=leads/show&id=' . $leadId
+        ], $changerId);
     }
 
     public static function assign(int $leadId, int $newUserId, ?string $reason = null, ?int $assignedBy = null): bool
@@ -280,14 +366,30 @@ class Lead
 
         $db->beginTransaction();
         try {
+            $assignerId = $assignedBy ?: Auth::id();
             $stmt = $db->prepare("UPDATE leads SET assigned_to = ?, updated_by = ? WHERE id = ?");
-            $stmt->execute([$newUserId, $assignedBy ?: Auth::id(), $leadId]);
+            $stmt->execute([$newUserId, $assignerId, $leadId]);
 
             $histStmt = $db->prepare("INSERT INTO lead_assignment_history (lead_id, previous_user_id, new_user_id, assigned_by, reason) VALUES (?, ?, ?, ?, ?)");
-            $histStmt->execute([$leadId, $prevUserId, $newUserId, $assignedBy ?: Auth::id(), $reason ?: 'Reassigned by administration']);
+            $histStmt->execute([$leadId, $prevUserId, $newUserId, $assignerId, $reason ?: 'Reassigned by administration']);
 
             $db->commit();
             Logger::audit('lead_assign', 'lead', $leadId, ['from' => $prevUserId], ['to' => $newUserId, 'reason' => $reason]);
+
+            // Notify assigned employee if not assigning to self
+            if ($newUserId !== Auth::id()) {
+                $assignerName = Auth::user()['name'] ?? 'Admin';
+                Notification::create([
+                    'user_id' => $newUserId,
+                    'sender_id' => $assignerId,
+                    'lead_id' => $leadId,
+                    'type' => 'lead_assigned',
+                    'title' => 'Lead Assigned: ' . $lead['student_name'],
+                    'message' => "{$assignerName} assigned lead {$lead['student_name']} ({$lead['lead_ref']}) to you.",
+                    'link' => 'index.php?route=leads/show&id=' . $leadId
+                ]);
+            }
+
             return true;
         } catch (\Throwable $e) {
             $db->rollBack();
@@ -303,16 +405,17 @@ class Lead
             if ($id <= 0) continue;
             if (self::assign($id, $newUserId, $reason, $assignedBy)) {
                 $count++;
-                if (!empty($initialTask) && !empty($initialTask['title'])) {
-                    $lead = self::find($id);
+                $lead = self::find($id);
+                if ($lead) {
+                    $taskTitle = !empty($initialTask['title']) ? $initialTask['title'] : ("Follow-up Call: " . $lead['student_name']);
                     Task::create([
                         'lead_id' => $id,
                         'session_id' => $lead['session_id'],
-                        'title' => $initialTask['title'],
+                        'title' => $taskTitle,
                         'task_type' => $initialTask['task_type'] ?? 'Follow-up Call',
-                        'description' => $initialTask['description'] ?? 'Initial contact task from bulk assignment',
+                        'description' => $initialTask['description'] ?? ("Initial follow-up call with parent of " . $lead['student_name'] . " (" . $lead['lead_ref'] . ") - " . ($reason ?: 'Assigned lead')),
                         'assigned_to' => $newUserId,
-                        'due_date' => $initialTask['due_date'] ?? date('Y-m-d H:i:s', strtotime('+1 day')),
+                        'due_date' => !empty($initialTask['due_date']) ? $initialTask['due_date'] : date('Y-m-d 11:00:00', strtotime('+1 day')),
                         'priority' => $initialTask['priority'] ?? 'Medium',
                     ]);
                 }
@@ -321,12 +424,180 @@ class Lead
         return $count;
     }
 
+    /**
+     * Get next counselor for automated equal lead distribution (Least-loaded & Round Robin)
+     */
+    public static function getNextCounselorForAssignment(?int $sessionId = null): ?int
+    {
+        $counselors = User::getAdmissionCounselors();
+        if (empty($counselors)) {
+            return null;
+        }
+
+        if (count($counselors) === 1) {
+            return (int)$counselors[0]['id'];
+        }
+
+        $counselorIds = array_column($counselors, 'id');
+        $placeholders = implode(',', array_fill(0, count($counselorIds), '?'));
+
+        $db = Database::getConnection();
+        // Count active assigned leads per counselor in this session
+        $sql = "SELECT u.id, COUNT(l.id) as lead_count, COALESCE(MAX(l.created_at), '1970-01-01') as last_assigned
+                FROM users u
+                LEFT JOIN leads l ON l.assigned_to = u.id AND l.is_archived = 0 " . ($sessionId ? "AND l.session_id = ?" : "") . "
+                WHERE u.id IN ({$placeholders})
+                GROUP BY u.id
+                ORDER BY lead_count ASC, last_assigned ASC, u.id ASC
+                LIMIT 1";
+
+        $params = $sessionId ? array_merge([$sessionId], $counselorIds) : $counselorIds;
+        $stmt = $db->prepare($sql);
+        $stmt->execute($params);
+        $best = $stmt->fetch();
+
+        return !empty($best['id']) ? (int)$best['id'] : (int)$counselors[0]['id'];
+    }
+
+    /**
+     * Bulk divide an array of leads equally among all active admission counselors
+     */
+    public static function bulkEqualDistribute(array $leadIds, ?string $reason = null, ?int $assignedBy = null): array
+    {
+        $counselors = User::getAdmissionCounselors();
+        if (empty($counselors) || empty($leadIds)) {
+            return ['total' => 0, 'counselors' => []];
+        }
+
+        $counselorCount = count($counselors);
+        $distribution = [];
+        foreach ($counselors as $c) {
+            $distribution[$c['id']] = 0;
+        }
+
+        $cIndex = 0;
+        $totalAssigned = 0;
+
+        foreach ($leadIds as $id) {
+            $id = (int)$id;
+            if ($id <= 0) continue;
+
+            $counselor = $counselors[$cIndex % $counselorCount];
+            $counselorId = (int)$counselor['id'];
+
+            if (self::assign($id, $counselorId, $reason ?: 'Automated equal distribution', $assignedBy)) {
+                $distribution[$counselorId]++;
+                $totalAssigned++;
+                $cIndex++;
+
+                $lead = self::find($id);
+                if ($lead) {
+                    Task::create([
+                        'lead_id' => $id,
+                        'session_id' => $lead['session_id'],
+                        'title' => "Initial Call: " . $lead['student_name'],
+                        'task_type' => 'Follow-up Call',
+                        'description' => "Automated distribution enquiry call with parent of {$lead['student_name']} ({$lead['lead_ref']})",
+                        'assigned_to' => $counselorId,
+                        'due_date' => date('Y-m-d 11:00:00', strtotime('+1 day')),
+                        'priority' => 'Medium',
+                    ]);
+                }
+            }
+        }
+
+        return [
+            'total' => $totalAssigned,
+            'counselors' => $distribution
+        ];
+    }
+
+    public static function delete(int $id, ?int $deletedBy = null): bool
+    {
+        $db = Database::getConnection();
+        $lead = self::find($id);
+        if (!$lead) {
+            return false;
+        }
+
+        $userId = $deletedBy ?: (Auth::id() ?? 1);
+        $stmt = $db->prepare("UPDATE leads SET is_archived = 1, updated_by = ? WHERE id = ?");
+        $res = $stmt->execute([$userId, $id]);
+        if ($res) {
+            $db->prepare("DELETE FROM tasks WHERE lead_id = ?")->execute([$id]);
+            Logger::audit('lead_delete', 'lead', $id, ['student_name' => $lead['student_name'], 'lead_ref' => $lead['lead_ref'], 'deleted_by' => $userId], null);
+        }
+        return $res;
+    }
+
+    public static function bulkDelete(array $ids, ?int $deletedBy = null): int
+    {
+        if (empty($ids)) {
+            return 0;
+        }
+
+        $ids = array_map('intval', array_unique($ids));
+        $ids = array_filter($ids, fn($id) => $id > 0);
+        if (empty($ids)) {
+            return 0;
+        }
+
+        $db = Database::getConnection();
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+
+        try {
+            $userId = $deletedBy ?: (Auth::id() ?? 1);
+            $stmt = $db->prepare("UPDATE leads SET is_archived = 1, updated_by = ? WHERE id IN ({$placeholders})");
+            $params = array_merge([$userId], array_values($ids));
+            $stmt->execute($params);
+            $count = $stmt->rowCount();
+
+            if ($count > 0) {
+                $taskStmt = $db->prepare("DELETE FROM tasks WHERE lead_id IN ({$placeholders})");
+                $taskStmt->execute(array_values($ids));
+
+                Logger::audit('lead_bulk_delete', 'lead', null, [
+                    'count' => $count,
+                    'deleted_by' => $userId,
+                    'sample_ids' => array_slice($ids, 0, 50)
+                ], null);
+            }
+
+            return $count;
+        } catch (\Throwable $e) {
+            Logger::error("Failed to bulk delete leads: " . $e->getMessage());
+            return 0;
+        }
+    }
+
     public static function getTimeline(int $leadId): array
     {
         $db = Database::getConnection();
         $timeline = [];
 
-        // 1. Assignment logs
+        // 1. Lead Registration / Creation Event
+        $leadStmt = $db->prepare("SELECT l.*, u.name as creator_name 
+                                  FROM leads l 
+                                  LEFT JOIN users u ON l.created_by = u.id 
+                                  WHERE l.id = ? LIMIT 1");
+        $leadStmt->execute([$leadId]);
+        $leadInfo = $leadStmt->fetch();
+        if ($leadInfo) {
+            $timeline[] = [
+                'type' => 'lead_created',
+                'title' => 'Admission Enquiry Registered',
+                'description' => "Enquiry for {$leadInfo['student_name']} (Class: " . ($leadInfo['class_applied'] ?: 'N/A') . ") registered via " . ($leadInfo['enquiry_source'] ?: 'Direct Enquiry') . ".",
+                'author' => $leadInfo['creator_name'] ?: 'System / Admin',
+                'student_name' => $leadInfo['student_name'],
+                'class_applied' => $leadInfo['class_applied'],
+                'enquiry_source' => $leadInfo['enquiry_source'],
+                'created_at' => $leadInfo['created_at'],
+                'badge' => 'primary',
+                'icon' => 'user-plus'
+            ];
+        }
+
+        // 2. Assignment & Reassignment logs
         $stmt = $db->prepare("SELECT lah.*, u_prev.name as prev_user_name, u_new.name as new_user_name, u_by.name as assigned_by_name
                               FROM lead_assignment_history lah
                               LEFT JOIN users u_prev ON lah.previous_user_id = u_prev.id
@@ -340,46 +611,156 @@ class Lead
                 'title' => 'Assigned to ' . $row['new_user_name'],
                 'description' => $row['prev_user_name'] ? "Reassigned from {$row['prev_user_name']}. Reason: " . ($row['reason'] ?: 'None') : "Assigned. Reason: " . ($row['reason'] ?: 'Initial assignment'),
                 'author' => $row['assigned_by_name'] ?: 'System',
+                'prev_user_name' => $row['prev_user_name'] ?: 'Unassigned',
+                'new_user_name' => $row['new_user_name'],
+                'reason' => $row['reason'],
                 'created_at' => $row['created_at'],
                 'badge' => 'primary',
                 'icon' => 'user-check'
             ];
         }
 
-        // 2. Follow-ups / Call logs
+        // 3. Follow-ups / Call logs & Status/Priority Activities
         $stmt = $db->prepare("SELECT ful.*, u.name as author_name 
                               FROM follow_up_logs ful
                               JOIN users u ON ful.created_by = u.id
                               WHERE ful.lead_id = ? ORDER BY ful.created_at ASC");
         $stmt->execute([$leadId]);
         foreach ($stmt->fetchAll() as $row) {
-            $timeline[] = [
-                'type' => 'call_log',
-                'title' => "Call Log ({$row['contact_method']}) - Outcome: {$row['outcome']}",
-                'description' => $row['remarks'] . ($row['next_followup_date'] ? " | Next Follow-up: " . date('d M Y, h:i A', strtotime($row['next_followup_date'])) : ""),
-                'author' => $row['author_name'],
-                'created_at' => $row['created_at'],
-                'badge' => 'info',
-                'icon' => 'phone-call'
-            ];
+            $isStatusChange = ($row['contact_method'] === 'Status Change' || $row['outcome'] === 'Status Update' || strpos($row['remarks'] ?? '', 'Status changed') === 0 || strpos($row['remarks'] ?? '', 'Status set') === 0);
+            $isPriorityChange = ($row['contact_method'] === 'Priority Change' || $row['outcome'] === 'Priority Update' || strpos($row['remarks'] ?? '', 'Priority changed') === 0 || strpos($row['remarks'] ?? '', 'Priority set') === 0);
+
+            if ($isStatusChange) {
+                $timeline[] = [
+                    'type' => 'status_change',
+                    'title' => 'Status Changed by ' . $row['author_name'],
+                    'description' => $row['remarks'],
+                    'author' => $row['author_name'],
+                    'contact_method' => 'Status Change',
+                    'outcome' => 'Status Update',
+                    'remarks' => $row['remarks'],
+                    'created_at' => $row['created_at'],
+                    'badge' => 'purple',
+                    'icon' => 'tag'
+                ];
+            } elseif ($isPriorityChange) {
+                $timeline[] = [
+                    'type' => 'priority_change',
+                    'title' => 'Priority Changed by ' . $row['author_name'],
+                    'description' => $row['remarks'],
+                    'author' => $row['author_name'],
+                    'contact_method' => 'Priority Change',
+                    'outcome' => 'Priority Update',
+                    'remarks' => $row['remarks'],
+                    'created_at' => $row['created_at'],
+                    'badge' => 'warning',
+                    'icon' => 'flame'
+                ];
+            } else {
+                $timeline[] = [
+                    'type' => 'call_log',
+                    'title' => "Follow-up Call ({$row['contact_method']}) - Outcome: {$row['outcome']}",
+                    'description' => $row['remarks'] . ($row['next_followup_date'] ? " | Next Follow-up: " . date('d M Y, h:i A', strtotime($row['next_followup_date'])) : ""),
+                    'author' => $row['author_name'],
+                    'contact_method' => $row['contact_method'] ?? 'Phone',
+                    'outcome' => $row['outcome'] ?? 'Connected',
+                    'remarks' => $row['remarks'],
+                    'next_followup_date' => $row['next_followup_date'],
+                    'created_at' => $row['created_at'],
+                    'badge' => 'info',
+                    'icon' => ($row['contact_method'] === 'WhatsApp' ? 'message-square' : ($row['contact_method'] === 'In-Person' ? 'users' : 'phone-call'))
+                ];
+            }
         }
 
-        // 3. Tasks
-        $stmt = $db->prepare("SELECT t.*, u.name as assignee_name, creator.name as creator_name
+        // 4. Tasks (both Task Created and Task Completed by admission counselor)
+        $stmt = $db->prepare("SELECT t.*, u.name as assignee_name, creator.name as creator_name, completer.name as completer_name
                               FROM tasks t
                               JOIN users u ON t.assigned_to = u.id
                               LEFT JOIN users creator ON t.created_by = creator.id
-                              WHERE t.lead_id = ? ORDER BY t.created_at ASC");
+                              LEFT JOIN users completer ON t.completed_by = completer.id
+                              WHERE t.lead_id = ? 
+                                AND t.description NOT LIKE '%Excel Import lead follow-up%' 
+                              ORDER BY t.created_at ASC");
         $stmt->execute([$leadId]);
         foreach ($stmt->fetchAll() as $row) {
+            // Task Created Event
             $timeline[] = [
-                'type' => 'task',
-                'title' => "Task: {$row['title']} [{$row['status']}]",
-                'description' => ($row['description'] ?: 'No details') . ($row['completion_remarks'] ? " | Outcome: {$row['completion_remarks']}" : ""),
-                'author' => $row['creator_name'] ?: 'Admin',
-                'created_at' => $row['completed_at'] ?: $row['created_at'],
-                'badge' => $row['status'] === 'Completed' ? 'success' : ($row['status'] === 'Cancelled' ? 'secondary' : 'warning'),
-                'icon' => 'check-square'
+                'type' => 'task_created',
+                'title' => "Task Created: {$row['title']}",
+                'task_id' => $row['id'],
+                'task_title' => $row['title'],
+                'task_type' => $row['task_type'] ?? 'Task',
+                'task_status' => $row['status'],
+                'priority' => $row['priority'],
+                'due_date' => $row['due_date'],
+                'assignee_name' => $row['assignee_name'],
+                'author' => $row['creator_name'] ?: 'Staff',
+                'description' => ($row['description'] ?: "Task assigned to {$row['assignee_name']}") . (!empty($row['due_date']) ? " | Due: " . date('d M Y, h:i A', strtotime($row['due_date'])) : ""),
+                'created_at' => $row['created_at'],
+                'badge' => 'primary',
+                'icon' => 'calendar-plus'
+            ];
+
+            // Task Completed Event (if task is completed)
+            if ($row['status'] === 'Completed') {
+                $completer = $row['completer_name'] ?: ($row['assignee_name'] ?: 'Admission Counselor');
+                $completedTime = $row['completed_at'] ?: $row['updated_at'] ?: $row['created_at'];
+                $timeline[] = [
+                    'type' => 'task_completed',
+                    'title' => "Task Completed: {$row['title']}",
+                    'task_id' => $row['id'],
+                    'task_title' => $row['title'],
+                    'task_type' => $row['task_type'] ?? 'Task',
+                    'task_status' => 'Completed',
+                    'priority' => $row['priority'],
+                    'assignee_name' => $row['assignee_name'],
+                    'author' => $completer,
+                    'completion_remarks' => $row['completion_remarks'] ?: 'Task completed successfully',
+                    'description' => $row['completion_remarks'] ?: "Task completed by {$completer}",
+                    'created_at' => $completedTime,
+                    'badge' => 'success',
+                    'icon' => 'check-circle-2'
+                ];
+            } elseif ($row['status'] === 'Cancelled') {
+                $timeline[] = [
+                    'type' => 'task_cancelled',
+                    'title' => "Task Cancelled: {$row['title']}",
+                    'task_id' => $row['id'],
+                    'task_title' => $row['title'],
+                    'task_type' => $row['task_type'] ?? 'Task',
+                    'task_status' => 'Cancelled',
+                    'priority' => $row['priority'],
+                    'assignee_name' => $row['assignee_name'],
+                    'author' => $row['creator_name'] ?: 'Staff',
+                    'description' => $row['completion_remarks'] ?: 'Task was cancelled',
+                    'created_at' => $row['updated_at'] ?: $row['created_at'],
+                    'badge' => 'secondary',
+                    'icon' => 'x-circle'
+                ];
+            }
+        }
+
+        // 5. Document Uploads
+        $stmt = $db->prepare("SELECT ld.*, dt.name as doc_type_name, u.name as uploader_name
+                              FROM lead_documents ld
+                              LEFT JOIN document_types dt ON ld.document_type_id = dt.id
+                              LEFT JOIN users u ON ld.uploaded_by = u.id
+                              WHERE ld.lead_id = ?
+                              ORDER BY ld.uploaded_at ASC");
+        $stmt->execute([$leadId]);
+        foreach ($stmt->fetchAll() as $row) {
+            $docLabel = $row['doc_type_name'] ?: ($row['file_name'] ?: 'Document');
+            $timeline[] = [
+                'type' => 'document',
+                'title' => 'Document Uploaded: ' . $docLabel,
+                'description' => "File {$row['file_name']} uploaded" . ($row['verification_status'] ? " (Verification: {$row['verification_status']})" : ""),
+                'author' => $row['uploader_name'] ?: 'Staff',
+                'file_name' => $row['file_name'],
+                'verification_status' => $row['verification_status'] ?? 'Pending',
+                'created_at' => $row['uploaded_at'] ?: $row['updated_at'] ?: date('Y-m-d H:i:s'),
+                'badge' => 'secondary',
+                'icon' => 'file-text'
             ];
         }
 
@@ -398,38 +779,44 @@ class Lead
         $sessionCondition = $sessionId ? "AND l.session_id = " . (int)$sessionId : "";
         $userCondition = $assignedTo ? "AND l.assigned_to = " . (int)$assignedTo : "";
 
-        // Total leads
-        $totalStmt = $db->query("SELECT COUNT(*) FROM leads l WHERE l.is_archived = 0 {$sessionCondition} {$userCondition}");
-        $totalLeads = (int)$totalStmt->fetchColumn();
+        // Combined single-pass aggregation query for primary lead metrics
+        $metricsStmt = $db->query("
+            SELECT 
+                COUNT(*) as total_leads,
+                COALESCE(SUM(CASE WHEN l.status = 'New' THEN 1 ELSE 0 END), 0) as new_leads,
+                COALESCE(SUM(CASE WHEN l.assigned_to IS NULL THEN 1 ELSE 0 END), 0) as unassigned_leads,
+                COALESCE(SUM(CASE WHEN l.status = 'Admission Confirmed' THEN 1 ELSE 0 END), 0) as confirmed_admissions,
+                COALESCE(SUM(CASE WHEN DATE(l.next_followup_date) = CURDATE() THEN 1 ELSE 0 END), 0) as followups_due_today,
+                COALESCE(SUM(CASE WHEN l.next_followup_date < NOW() AND l.status NOT IN ('Admission Confirmed', 'Lost / Unreachable') THEN 1 ELSE 0 END), 0) as overdue_followups,
+                COALESCE(SUM(CASE WHEN l.status = 'School Visit Scheduled' THEN 1 ELSE 0 END), 0) as school_visits
+            FROM leads l 
+            WHERE l.is_archived = 0 {$sessionCondition} {$userCondition}
+        ");
+        $m = $metricsStmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
-        // New leads
-        $newStmt = $db->query("SELECT COUNT(*) FROM leads l WHERE l.is_archived = 0 AND l.status = 'New' {$sessionCondition} {$userCondition}");
-        $newLeads = (int)$newStmt->fetchColumn();
+        $totalLeads = (int)($m['total_leads'] ?? 0);
+        $newLeads = (int)($m['new_leads'] ?? 0);
+        $unassignedLeads = (int)($m['unassigned_leads'] ?? 0);
+        $confirmedAdmissions = (int)($m['confirmed_admissions'] ?? 0);
+        $followupsDueToday = (int)($m['followups_due_today'] ?? 0);
+        $overdueFollowups = (int)($m['overdue_followups'] ?? 0);
+        $schoolVisits = (int)($m['school_visits'] ?? 0);
 
-        // Unassigned leads
-        $unassignedStmt = $db->query("SELECT COUNT(*) FROM leads l WHERE l.is_archived = 0 AND l.assigned_to IS NULL {$sessionCondition}");
-        $unassignedLeads = (int)$unassignedStmt->fetchColumn();
-
-        // Confirmed admissions
-        $confirmedStmt = $db->query("SELECT COUNT(*) FROM leads l WHERE l.is_archived = 0 AND l.status = 'Admission Confirmed' {$sessionCondition} {$userCondition}");
-        $confirmedAdmissions = (int)$confirmedStmt->fetchColumn();
-
-        // Follow-ups due today
-        $dueTodayStmt = $db->query("SELECT COUNT(*) FROM leads l WHERE l.is_archived = 0 AND DATE(l.next_followup_date) = CURDATE() {$sessionCondition} {$userCondition}");
-        $followupsDueToday = (int)$dueTodayStmt->fetchColumn();
-
-        // Overdue follow-ups
-        $overdueStmt = $db->query("SELECT COUNT(*) FROM leads l WHERE l.is_archived = 0 AND l.next_followup_date < NOW() AND l.status NOT IN ('Admission Confirmed', 'Lost / Unreachable') {$sessionCondition} {$userCondition}");
-        $overdueFollowups = (int)$overdueStmt->fetchColumn();
-
-        // Upcoming school visits
-        $visitsStmt = $db->query("SELECT COUNT(*) FROM leads l WHERE l.is_archived = 0 AND l.status = 'School Visit Scheduled' {$sessionCondition} {$userCondition}");
-        $schoolVisits = (int)$visitsStmt->fetchColumn();
-
-        // Overdue tasks
-        $taskUserCond = $assignedTo ? "AND t.assigned_to = " . (int)$assignedTo : "";
+        // Overdue tasks (strictly for assigned leads with at least 1 activity change)
+        $taskUserCond = $assignedTo ? "AND l.assigned_to = " . (int)$assignedTo : "";
         $taskSessionCond = $sessionId ? "AND t.session_id = " . (int)$sessionId : "";
-        $overdueTasksStmt = $db->query("SELECT COUNT(*) FROM tasks t WHERE t.due_date < NOW() AND t.status IN ('Pending', 'In Progress') {$taskSessionCond} {$taskUserCond}");
+        $overdueTasksStmt = $db->query("SELECT COUNT(*) FROM tasks t 
+            JOIN leads l ON t.lead_id = l.id 
+            WHERE l.is_archived = 0 
+              AND t.due_date < NOW() 
+              AND t.status IN ('Pending', 'In Progress') 
+              AND (
+                  t.description NOT LIKE '%Excel Import lead follow-up%' 
+                  OR l.status != 'New'
+                  OR EXISTS (SELECT 1 FROM follow_up_logs f WHERE f.lead_id = l.id)
+                  OR EXISTS (SELECT 1 FROM audit_logs a WHERE a.entity_type = 'lead' AND a.entity_id = l.id AND a.action IN ('lead_status_update', 'lead_priority_update', 'lead_update'))
+              )
+              {$taskSessionCond} {$taskUserCond}");
         $overdueTasks = (int)$overdueTasksStmt->fetchColumn();
 
         // Conversion Rate: Confirmed admissions / Total active leads * 100%
@@ -463,4 +850,143 @@ class Lead
             'leads_by_source' => $leadsBySource,
         ];
     }
+
+    public static function getFilteredIds(array $filters = []): array
+    {
+        $db = Database::getConnection();
+        $where = ["l.is_archived = 0"];
+        $params = [];
+
+        if (!empty($filters['unassigned_only']) && Auth::isAdmin()) {
+            $where[] = "(l.assigned_to IS NULL OR l.assigned_to = 0)";
+        } else {
+            if (Auth::isEmployee()) {
+                $where[] = "l.assigned_to = ?";
+                $params[] = Auth::id();
+            } elseif (!empty($filters['assigned_to'])) {
+                $where[] = "l.assigned_to = ?";
+                $params[] = (int)$filters['assigned_to'];
+            }
+        }
+
+        if (!empty($filters['session_id'])) {
+            $where[] = "l.session_id = ?";
+            $params[] = (int)$filters['session_id'];
+        }
+
+        if (!empty($filters['status'])) {
+            if (in_array($filters['status'], ['public_enquiry', 'Public Enquiry', 'Public Enquiries', 'Website / Online Enquiry'])) {
+                $where[] = "(l.enquiry_source = 'Website / Online Enquiry' OR l.enquiry_source LIKE '%Online Enquiry%' OR l.enquiry_source LIKE '%Public%')";
+            } else {
+                $where[] = "l.status = ?";
+                $params[] = $filters['status'];
+            }
+        }
+
+        if (!empty($filters['class_applied'])) {
+            $classSynonyms = self::getClassSynonyms($filters['class_applied']);
+            if (count($classSynonyms) === 1) {
+                $where[] = "l.class_applied = ?";
+                $params[] = $classSynonyms[0];
+            } else {
+                $ph = implode(',', array_fill(0, count($classSynonyms), '?'));
+                $where[] = "l.class_applied IN ($ph)";
+                foreach ($classSynonyms as $cs) {
+                    $params[] = $cs;
+                }
+            }
+        }
+
+        if (!empty($filters['enquiry_source'])) {
+            if ($filters['enquiry_source'] === 'Admission Manager') {
+                $where[] = "(l.enquiry_source = ? OR l.enquiry_source LIKE 'Admission Manager%')";
+                $params[] = $filters['enquiry_source'];
+            } else {
+                $where[] = "l.enquiry_source = ?";
+                $params[] = $filters['enquiry_source'];
+            }
+        }
+
+        if (!empty($filters['priority'])) {
+            $where[] = "l.priority = ?";
+            $params[] = $filters['priority'];
+        }
+
+        if (!empty($filters['date_from'])) {
+            $where[] = "l.enquiry_date >= ?";
+            $params[] = $filters['date_from'];
+        }
+
+        if (!empty($filters['date_to'])) {
+            $where[] = "l.enquiry_date <= ?";
+            $params[] = $filters['date_to'];
+        }
+
+        if (!empty($filters['followup_due'])) {
+            if ($filters['followup_due'] === 'today') {
+                $where[] = "DATE(l.next_followup_date) = CURDATE()";
+            } elseif ($filters['followup_due'] === 'overdue') {
+                $where[] = "l.next_followup_date < NOW() AND l.status NOT IN ('Admission Confirmed', 'Lost / Unreachable')";
+            } elseif ($filters['followup_due'] === 'upcoming') {
+                $where[] = "l.next_followup_date > NOW()";
+            }
+        }
+
+        if (!empty($filters['search'])) {
+            $searchTerm = '%' . trim($filters['search']) . '%';
+            $where[] = "(l.student_name LIKE ? OR l.parent_name LIKE ? OR l.mobile LIKE ? OR l.alternate_mobile LIKE ? OR l.email LIKE ? OR l.lead_ref LIKE ?)";
+            for ($i = 0; $i < 6; $i++) {
+                $params[] = $searchTerm;
+            }
+        }
+
+        $whereClause = implode(" AND ", $where);
+        $stmt = $db->prepare("SELECT l.id FROM leads l WHERE {$whereClause}");
+        $stmt->execute($params);
+        return $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+    }
+
+    /**
+     * Resolves canonical class names and legacy Roman numeral synonyms
+     * (e.g. Grade 1 <=> I, Grade 11 - Science <=> XI(SCIENCE))
+     */
+    public static function getClassSynonyms(string $class): array
+    {
+        $clean = trim($class);
+        $map = [
+            'Pre-Nursery'           => ['Pre-Nursery', 'Pre Nursery', 'Playgroup', 'Play Group', 'PRE-NURSERY'],
+            'Nursery'               => ['Nursery', 'NURSERY', 'Nur'],
+            'LKG'                   => ['LKG', 'L.K.G.', 'L.K.G', 'Lower KG'],
+            'UKG'                   => ['UKG', 'U.K.G.', 'U.K.G', 'Upper KG'],
+            'Grade 1'               => ['Grade 1', 'Class 1', 'Class I', 'I', 'Grade I', '1st', '1'],
+            'Grade 2'               => ['Grade 2', 'Class 2', 'Class II', 'II', 'Grade II', '2nd', '2'],
+            'Grade 3'               => ['Grade 3', 'Class 3', 'Class III', 'III', 'Grade III', '3rd', '3'],
+            'Grade 4'               => ['Grade 4', 'Class 4', 'Class IV', 'IV', 'Grade IV', '4th', '4'],
+            'Grade 5'               => ['Grade 5', 'Class 5', 'Class V', 'V', 'Grade V', '5th', '5'],
+            'Grade 6'               => ['Grade 6', 'Class 6', 'Class VI', 'VI', 'Grade VI', '6th', '6'],
+            'Grade 7'               => ['Grade 7', 'Class 7', 'Class VII', 'VII', 'Grade VII', '7th', '7'],
+            'Grade 8'               => ['Grade 8', 'Class 8', 'Class VIII', 'VIII', 'Grade VIII', '8th', '8'],
+            'Grade 9'               => ['Grade 9', 'Class 9', 'Class IX', 'IX', 'Grade IX', '9th', '9'],
+            'Grade 10'              => ['Grade 10', 'Class 10', 'Class X', 'X', 'Grade X', '10th', '10'],
+            'Grade 11 - Science'    => ['Grade 11 - Science', 'Grade 11 (Science)', 'XI(SCIENCE)', 'XI - Science', 'XI Science', '11 Science', 'Class XI Science', 'Class 11 Science'],
+            'Grade 11 - Commerce'   => ['Grade 11 - Commerce', 'Grade 11 (Commerce)', 'XI(COMMERCE)', 'XI - Commerce', 'XI Commerce', '11 Commerce', 'Class XI Commerce', 'Class 11 Commerce'],
+            'Grade 11 - Humanities' => ['Grade 11 - Humanities', 'Grade 11 (Humanities)', 'XI(HUMANITIES)', 'XI - Humanities', 'XI Humanities', 'XI - Arts', 'XI Arts', '11 Humanities', 'Class XI Humanities', 'Class 11 Humanities'],
+            'Grade 12 - Science'    => ['Grade 12 - Science', 'Grade 12 (Science)', 'XII(SCIENCE)', 'XII - Science', 'XII Science', '12 Science', 'Class XII Science', 'Class 12 Science'],
+            'Grade 12 - Commerce'   => ['Grade 12 - Commerce', 'Grade 12 (Commerce)', 'XII(COMMERCE)', 'XII - Commerce', 'XII Commerce', '12 Commerce', 'Class XII Commerce', 'Class 12 Commerce'],
+            'Grade 12 - Humanities' => ['Grade 12 - Humanities', 'Grade 12 (Humanities)', 'XII(HUMANITIES)', 'XII - Humanities', 'XII Humanities', 'XII - Arts', 'XII Arts', '12 Humanities', 'Class XII Humanities', 'Class 12 Humanities'],
+        ];
+
+        foreach ($map as $canonical => $synonyms) {
+            if (strcasecmp($canonical, $clean) === 0) {
+                return array_values(array_unique(array_merge([$canonical], $synonyms)));
+            }
+            foreach ($synonyms as $syn) {
+                if (strcasecmp($syn, $clean) === 0) {
+                    return array_values(array_unique(array_merge([$canonical], $synonyms)));
+                }
+            }
+        }
+        return [$clean];
+    }
 }
+

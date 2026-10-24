@@ -26,4 +26,10 @@ class Csrf
         }
         return hash_equals($_SESSION['_csrf_token'], $token);
     }
+
+    public static function verify(): bool
+    {
+        $token = $_POST['_csrf_token'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? null;
+        return self::validate($token);
+    }
 }

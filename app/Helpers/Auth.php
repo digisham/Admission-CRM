@@ -11,8 +11,22 @@ class Auth
         if (session_status() === PHP_SESSION_NONE && !headers_sent()) {
             ini_set('session.cookie_httponly', '1');
             ini_set('session.use_only_cookies', '1');
-            if (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') {
+            ini_set('session.use_strict_mode', '1');
+            
+            $isSecure = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on');
+            if ($isSecure) {
                 ini_set('session.cookie_secure', '1');
+            }
+
+            if (PHP_VERSION_ID >= 70300) {
+                session_set_cookie_params([
+                    'lifetime' => 0,
+                    'path' => '/',
+                    'domain' => '',
+                    'secure' => $isSecure,
+                    'httponly' => true,
+                    'samesite' => 'Lax'
+                ]);
             }
             @session_start();
         }
@@ -41,9 +55,17 @@ class Auth
         }
     }
 
+    private static ?array $cachedUser = null;
+
+    public static function resetCache(): void
+    {
+        self::$cachedUser = null;
+    }
+
     public static function logout(): void
     {
         self::startSession();
+        self::$cachedUser = null;
         $_SESSION = [];
         if (ini_get("session.use_cookies")) {
             $params = session_get_cookie_params();
@@ -61,6 +83,14 @@ class Auth
         return !empty($_SESSION['user_id']);
     }
 
+    public static function requireLogin(): void
+    {
+        self::startSession();
+        if (!self::check()) {
+            View::redirect(View::url('login'));
+        }
+    }
+
     public static function user(): ?array
     {
         self::startSession();
@@ -68,9 +98,8 @@ class Auth
             return null;
         }
 
-        static $cachedUser = null;
-        if ($cachedUser !== null) {
-            return $cachedUser;
+        if (self::$cachedUser !== null) {
+            return self::$cachedUser;
         }
 
         try {
@@ -85,7 +114,7 @@ class Auth
                 self::logout();
                 return null;
             }
-            $cachedUser = $user;
+            self::$cachedUser = $user;
             return $user;
         } catch (\Throwable) {
             return null;

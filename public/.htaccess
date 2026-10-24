@@ -1,0 +1,21 @@
+# ==============================================================================
+# GD Goenka Admission CRM - Public Directory Configuration (.htaccess)
+# ==============================================================================
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Prevent directory browsing
+    Options -Indexes
+
+    # Clean URLs for Public Enquire / Inquire
+    RewriteRule ^(enquire|inquire|admission|admission-enquiry)/?$ index.php?route=inquire [L,QSA]
+
+    # Allow direct access to real existing files or directories
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # Route all non-existing requests through index.php
+    RewriteRule ^(.*)$ index.php?route=$1 [L,QSA]
+</IfModule>

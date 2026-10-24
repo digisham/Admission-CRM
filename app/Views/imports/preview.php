@@ -34,25 +34,29 @@ $pageTitle = 'Step 2: Column Mapping & Validation Preview';
 
     <!-- Column Mapping Card -->
     <div class="card border-0 shadow-sm rounded-3 mb-4">
-        <div class="card-header bg-white border-bottom py-3">
-            <h6 class="fw-bold text-navy mb-0">1. Map Spreadsheet Headers to CRM Fields</h6>
+        <div class="card-header bg-white border-bottom py-3 d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <div>
+                <h6 class="fw-bold text-navy mb-0">1. Map Spreadsheet Headers to CRM Fields</h6>
+                <div class="text-muted small" style="font-size: 0.76rem;">Primary required column: <strong>Student Name</strong>. If <strong>Mobile Number</strong> or other columns are empty, the system automatically fills safe defaults (e.g. Mobile as 'N/A', Status as 'New') so all leads import cleanly without being skipped.</div>
+            </div>
+            <span class="badge bg-light text-secondary border px-2.5 py-1">Auto-detected Columns</span>
         </div>
         <div class="card-body p-4">
             <div class="row g-3">
                 <?php
                 $targetFields = [
-                    'student_name' => ['label' => 'Student Name *', 'required' => true, 'guess' => ['student name', 'student', 'child name', 'name']],
-                    'parent_name' => ['label' => 'Parent Name *', 'required' => true, 'guess' => ['parent name', 'father name', 'mother name', 'parent', 'guardian']],
-                    'mobile' => ['label' => 'Mobile Number *', 'required' => true, 'guess' => ['mobile number', 'mobile', 'phone', 'contact']],
-                    'alternate_mobile' => ['label' => 'Alternate Mobile', 'required' => false, 'guess' => ['alternate mobile', 'alt mobile', 'secondary phone']],
-                    'email' => ['label' => 'Email Address', 'required' => false, 'guess' => ['email address', 'email', 'e-mail']],
-                    'class_applied' => ['label' => 'Class Applied', 'required' => false, 'guess' => ['class applied', 'class', 'grade']],
-                    'enquiry_source' => ['label' => 'Enquiry Source', 'required' => false, 'guess' => ['enquiry source', 'source', 'channel']],
-                    'assigned_to' => ['label' => 'Assigned Employee / Counselor', 'required' => false, 'guess' => ['assigned employee', 'counselor', 'assigned to']],
-                    'priority' => ['label' => 'Priority', 'required' => false, 'guess' => ['priority', 'urgency']],
-                    'address' => ['label' => 'Residential Address', 'required' => false, 'guess' => ['address', 'residence']],
-                    'city' => ['label' => 'City', 'required' => false, 'guess' => ['city', 'location']],
-                    'remarks' => ['label' => 'Remarks / Notes', 'required' => false, 'guess' => ['remarks', 'notes', 'comments']],
+                    'student_name' => ['label' => 'Student Name *', 'required' => true, 'default' => 'Required', 'guess' => ['student name', 'student', 'child name', 'name', 'applicant', 'candidate', 'student_name']],
+                    'parent_name' => ['label' => 'Parent Name', 'required' => false, 'default' => 'Defaults to "Parent / Guardian"', 'guess' => ['parent name', 'father name', 'mother name', 'parent', 'guardian', 'father', 'mother', 'parent_name']],
+                    'mobile' => ['label' => 'Mobile Number', 'required' => false, 'default' => 'Defaults to "N/A" if empty', 'guess' => ['mobile number', 'mobile', 'phone', 'contact', 'contact no', 'mobile no', 'phone number', 'cell', 'mobile_number']],
+                    'alternate_mobile' => ['label' => 'Alternate Mobile', 'required' => false, 'default' => 'Optional', 'guess' => ['alternate mobile', 'alt mobile', 'secondary phone', 'alternate phone', 'alt phone']],
+                    'email' => ['label' => 'Email Address', 'required' => false, 'default' => 'Optional', 'guess' => ['email address', 'email', 'e-mail', 'mail']],
+                    'class_applied' => ['label' => 'Class Applied', 'required' => false, 'default' => 'Defaults to "Grade 1"', 'guess' => ['class applied', 'class', 'grade', 'standard', 'admission class']],
+                    'enquiry_source' => ['label' => 'Enquiry Source', 'required' => false, 'default' => 'Defaults to "Direct Walk-in"', 'guess' => ['enquiry source', 'source', 'channel', 'lead source']],
+                    'assigned_to' => ['label' => 'Assigned Employee / Counselor', 'required' => false, 'default' => 'Uses Allocation Rule below', 'guess' => ['assigned employee', 'counselor', 'assigned to', 'counsellor', 'staff']],
+                    'priority' => ['label' => 'Priority', 'required' => false, 'default' => 'Defaults to "Medium"', 'guess' => ['priority', 'urgency', 'level']],
+                    'address' => ['label' => 'Residential Address', 'required' => false, 'default' => 'Optional', 'guess' => ['address', 'residence', 'street', 'locality']],
+                    'city' => ['label' => 'City', 'required' => false, 'default' => 'Defaults to "Purnea"', 'guess' => ['city', 'location', 'town', 'district']],
+                    'remarks' => ['label' => 'Remarks / Notes', 'required' => false, 'default' => 'Defaults to import note', 'guess' => ['remarks', 'notes', 'comments', 'description']],
                 ];
 
                 foreach ($targetFields as $fieldName => $info):
@@ -69,11 +73,16 @@ $pageTitle = 'Step 2: Column Mapping & Validation Preview';
                     }
                 ?>
                 <div class="col-md-4 col-sm-6">
-                    <label class="form-label small fw-semibold text-muted">
-                        <?= $info['label'] ?>
-                    </label>
+                    <div class="d-flex align-items-center justify-content-between mb-1">
+                        <label class="form-label small fw-semibold text-muted mb-0">
+                            <?= $info['label'] ?>
+                        </label>
+                        <?php if (!empty($info['default'])): ?>
+                            <span class="text-muted" style="font-size: 0.68rem;"><?= $info['default'] ?></span>
+                        <?php endif; ?>
+                    </div>
                     <select name="mapping[<?= $fieldName ?>]" class="form-select form-select-sm" <?= $info['required'] ? 'required' : '' ?>>
-                        <option value="">-- Do Not Import --</option>
+                        <option value="">-- Do Not Import / Empty --</option>
                         <?php foreach ($headers as $h): ?>
                             <option value="<?= Sanitizer::e($h) ?>" <?= $h === $bestMatch ? 'selected' : '' ?>>
                                 <?= Sanitizer::e($h) ?>
@@ -132,10 +141,45 @@ $pageTitle = 'Step 2: Column Mapping & Validation Preview';
         </div>
     </div>
 
+    <!-- 3. Lead Distribution to Counselors Strategy -->
+    <div class="card border-0 shadow-sm rounded-3 mb-4">
+        <div class="card-header bg-white border-bottom py-3 d-flex align-items-center justify-content-between">
+            <h6 class="fw-bold text-navy mb-0">3. Lead Allocation to Admission Counselors</h6>
+            <span class="badge bg-success-subtle text-success border border-success-subtle px-2.5 py-1">⚡ Auto Equal Divide</span>
+        </div>
+        <div class="card-body p-4">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <div class="form-check p-3 bg-light rounded border h-100">
+                        <input class="form-check-input" type="radio" name="assign_strategy" id="assignRoundRobin" value="round_robin" checked>
+                        <label class="form-check-label fw-bold small text-navy" for="assignRoundRobin">
+                            ⚡ Divide & Distribute Equally to All Admission Counselors (Automatic)
+                        </label>
+                        <div class="text-muted small mt-1" style="font-size: 0.75rem;">
+                            Every active counselor receives an equal portion of the imported leads in a balanced round-robin cycle. Tasks and notifications are generated automatically.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-6">
+                    <div class="form-check p-3 bg-light rounded border h-100">
+                        <input class="form-check-input" type="radio" name="assign_strategy" id="assignUnassigned" value="unassigned">
+                        <label class="form-check-label fw-bold small text-navy" for="assignUnassigned">
+                            Keep in Unassigned Queue
+                        </label>
+                        <div class="text-muted small mt-1" style="font-size: 0.75rem;">
+                            Import leads without counselor assignment. They will remain in the Unassigned Leads queue for subsequent manual allocation.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Preview Table Card -->
     <div class="card border-0 shadow-sm rounded-3 mb-4">
         <div class="card-header bg-white border-bottom py-3">
-            <h6 class="fw-bold text-navy mb-0">3. Raw Spreadsheet Preview (First <?= count($previewRows) ?> Rows)</h6>
+            <h6 class="fw-bold text-navy mb-0">4. Raw Spreadsheet Preview (First <?= count($previewRows) ?> Rows)</h6>
         </div>
         <div class="table-responsive" style="max-height: 340px;">
             <table class="table custom-table table-bordered table-sm mb-0">

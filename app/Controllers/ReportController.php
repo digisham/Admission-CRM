@@ -16,6 +16,11 @@ class ReportController
             View::redirect(View::url('login'));
         }
 
+        if (!Auth::isAdmin()) {
+            View::flash('error', 'Access denied. Analytics is restricted to administrators.');
+            View::redirect(View::url('dashboard'));
+        }
+
         $activeSession = AcademicSession::getActive();
         $selectedSessionId = $_GET['session_id'] ?? ($_SESSION['selected_session_id'] ?? $activeSession['id']);
         $selectedSessionId = (int)$selectedSessionId;
@@ -32,7 +37,7 @@ class ReportController
 
         // 3. Leads by Class
         $classStmt = $db->prepare("SELECT class_applied, COUNT(*) as total, 
-                                          COUNT(CASE WHEN status = 'Admission Confirmed' THEN 1 END) as confirmed
+                                          COUNT(CASE WHEN status IN ('Admission Confirmed', 'Confirmed') THEN 1 END) as confirmed
                                    FROM leads 
                                    WHERE session_id = ? AND is_archived = 0 
                                    GROUP BY class_applied 
@@ -42,7 +47,7 @@ class ReportController
 
         // 4. Leads by Source
         $sourceStmt = $db->prepare("SELECT enquiry_source, COUNT(*) as total,
-                                           COUNT(CASE WHEN status = 'Admission Confirmed' THEN 1 END) as confirmed
+                                           COUNT(CASE WHEN status IN ('Admission Confirmed', 'Confirmed') THEN 1 END) as confirmed
                                     FROM leads 
                                     WHERE session_id = ? AND is_archived = 0 
                                     GROUP BY enquiry_source 
@@ -50,10 +55,24 @@ class ReportController
         $sourceStmt->execute([$selectedSessionId]);
         $sourceReport = $sourceStmt->fetchAll();
 
-        // 5. Counselor Activity Report
+        // 5. Monthly Inflow & Admission Trend (Last 12 months)
+        $trendStmt = $db->prepare("SELECT 
+                                        DATE_FORMAT(enquiry_date, '%b %Y') as month_label,
+                                        DATE_FORMAT(enquiry_date, '%Y-%m') as ym,
+                                        COUNT(*) as total,
+                                        COUNT(CASE WHEN status IN ('Admission Confirmed', 'Confirmed') THEN 1 END) as confirmed
+                                   FROM leads 
+                                   WHERE session_id = ? AND is_archived = 0 
+                                   GROUP BY ym, month_label 
+                                   ORDER BY ym ASC 
+                                   LIMIT 12");
+        $trendStmt->execute([$selectedSessionId]);
+        $monthlyTrend = $trendStmt->fetchAll();
+
+        // 6. Counselor Activity Report
         $workload = User::getWorkload($selectedSessionId);
 
-        // 6. Document Checklist Completion Report (authorized roles)
+        // 7. Document Checklist Completion Report (authorized roles)
         $docReport = [];
         if (Auth::isAdmin()) {
             $docStmt = $db->prepare("SELECT dt.name as doc_name,
@@ -70,12 +89,18 @@ class ReportController
             $docReport = $docStmt->fetchAll();
         }
 
+        $currentSession = AcademicSession::find($selectedSessionId) ?: $activeSession;
+        $allSessions = AcademicSession::all();
+
         View::render('reports/index', [
             'selectedSessionId' => $selectedSessionId,
+            'currentSession' => $currentSession,
+            'allSessions' => $allSessions,
             'metrics' => $metrics,
             'statusReport' => $statusReport,
             'classReport' => $classReport,
             'sourceReport' => $sourceReport,
+            'monthlyTrend' => $monthlyTrend,
             'workload' => $workload,
             'docReport' => $docReport,
         ]);
