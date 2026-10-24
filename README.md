@@ -60,17 +60,7 @@ Configurable document checklist for verified admissions:
 - Enquiries segmented by status, class/grade, and acquisition source.
 - Counselor activity and overdue alerts.
 
----
-
-## 🔐 Default Demo Accounts
-
-| Role | Email | Password |
-| :--- | :--- | :--- |
-| **Super Administrator** | `admin@gdgoenkapurnea.com` | `Admin@12345` |
-| **Senior Counselor** | `priya@gdgoenkapurnea.com` | `Priya@12345` |
-| **Admission Counselor** | `rahul@gdgoenkapurnea.com` | `Rahul@12345` |
-
----
+--- 
 
 ## 🚀 Local Development Setup
 
