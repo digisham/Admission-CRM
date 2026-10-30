@@ -16,9 +16,9 @@ class Database
     // =========================================================================
     public static string $host     = 'localhost';              // Usually 'localhost' or '127.0.0.1' on cPanel / Plesk
     public static string $port     = '3306';
-    public static string $database = 'school_admission_crm';   // Your hosting DB Name (e.g. u123456_school_crm)
-    public static string $username = 'root';                   // Your hosting DB User (e.g. u123456_admin)
-    public static string $password = '';                       // Your hosting DB Password
+    public static string $database = 'u716314755_admissioncrm';   // Your hosting DB Name (e.g. u123456_school_crm)
+    public static string $username = 'u716314755_shamshercrm';                   // Your hosting DB User (e.g. u123456_admin)
+    public static string $password = 'Shamsher9650@@';                       // Your hosting DB Password
     public static string $charset  = 'utf8mb4';
 
     public static function getConnection(): PDO
